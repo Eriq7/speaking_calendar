@@ -1,0 +1,19 @@
+# Dependencies
+frontend/node_modules/
+frontend/.next/
+
+# Environment variables (never commit!)
+frontend/.env.local
+frontend/.env*.local
+
+# Python cache
+scripts/__pycache__/
+*.pyc
+
+# Internal planning files
+.plans/
+CLAUDE.md
+grill_me_decision_making_process.md
+
+# OS
+.DS_Store

@@ -1,0 +1,262 @@
+// Supabase Edge Function — sends due Web Push reminders and backfills
+// open-ended recurring reminders. Triggered by pg_cron (see 002_pg_cron.sql).
+//
+// Body:
+//   { "mode": "send" }     — push all due, unsent reminders (default)
+//   { "mode": "backfill" } — extend open-ended recurring reminders to end of next year (INV-8)
+
+import { createClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
+import { rrulestr } from "npm:rrule@2.8.1";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const VAPID_PUBLIC = Deno.env.get("VAPID_PUBLIC_KEY")!;
+const VAPID_PRIVATE = Deno.env.get("VAPID_PRIVATE_KEY")!;
+const VAPID_MAILTO = Deno.env.get("VAPID_MAILTO") ?? "mailto:admin@example.com";
+
+const DEFAULT_HOUR = 9;
+const DEFAULT_MINUTE = 0;
+
+webpush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC, VAPID_PRIVATE);
+
+const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
+
+interface ReminderRow {
+  id: string;
+  event_id: string;
+  fire_at: string;
+  kind: "day-of" | "early";
+  days_before: number | null;
+  title: string;
+  time: string | null;
+  location: string | null;
+  color: string;
+}
+
+interface Subscription {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
+function buildMessage(
+  reminder: ReminderRow,
+  userName: string,
+  butlerName: string
+): { title: string; body: string } {
+  const loc = reminder.location ? ` ${reminder.location}` : "";
+  if (reminder.kind === "early") {
+    const eventDate = new Date(reminder.fire_at);
+    eventDate.setUTCDate(eventDate.getUTCDate() + (reminder.days_before ?? 0));
+    const dateStr = eventDate.toISOString().slice(0, 10);
+    return {
+      title: reminder.title,
+      body: `Hey ${userName}, it's ${butlerName}. In ${reminder.days_before} days (${dateStr}) — ${reminder.title}.`,
+    };
+  }
+  const whenTime = reminder.time ? ` ${reminder.time}` : "";
+  return {
+    title: reminder.title,
+    body: `Hey ${userName}, it's ${butlerName}. Today${whenTime} — ${reminder.title}.${loc}`,
+  };
+}
+
+async function sendDue(): Promise<number> {
+  const nowIso = new Date().toISOString();
+
+  const { data: due, error } = await supabase
+    .from("reminders")
+    .select("id, event_id, fire_at, kind, days_before, title, time, location, color")
+    .eq("sent", false)
+    .lte("fire_at", nowIso);
+  if (error) throw error;
+  if (!due || due.length === 0) return 0;
+
+  const { data: settings } = await supabase
+    .from("settings")
+    .select("user_name, butler_name")
+    .eq("id", true)
+    .single();
+  const userName = settings?.user_name ?? "friend";
+  const butlerName = settings?.butler_name ?? "Alfred";
+
+  const { data: subs } = await supabase
+    .from("subscriptions")
+    .select("endpoint, p256dh, auth");
+  const subscriptions = (subs ?? []) as Subscription[];
+
+  const staleEndpoints = new Set<string>();
+
+  for (const reminder of due as ReminderRow[]) {
+    const message = buildMessage(reminder, userName, butlerName);
+    const payload = JSON.stringify({ ...message, color: reminder.color });
+
+    const results = await Promise.all(
+      subscriptions.map(async (sub) => {
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: sub.endpoint,
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
+            },
+            payload
+          );
+          return true;
+        } catch (err) {
+          const status = (err as { statusCode?: number }).statusCode;
+          if (status === 404 || status === 410) staleEndpoints.add(sub.endpoint);
+          return false;
+        }
+      })
+    );
+
+    // INV-4: mark sent only after at least one successful delivery, so an
+    // undelivered reminder (no subscribers / transient failure) is retried
+    // by the next cron tick instead of being silently lost (RD-1).
+    if (results.some(Boolean)) {
+      await supabase
+        .from("reminders")
+        .update({ sent: true })
+        .eq("id", reminder.id);
+    }
+  }
+
+  if (staleEndpoints.size > 0) {
+    await supabase
+      .from("subscriptions")
+      .delete()
+      .in("endpoint", [...staleEndpoints]);
+  }
+
+  return due.length;
+}
+
+// INV-1 / INV-7: convert a local wall time in `tz` to a UTC ISO string.
+function wallTimeToUtcIso(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  tz: string
+): string {
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = dtf.formatToParts(new Date(guess));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const asUTC = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour") === 24 ? 0 : get("hour"),
+    get("minute"),
+    get("second")
+  );
+  return new Date(guess - (asUTC - guess)).toISOString();
+}
+
+// Re-expand open-ended recurring events so their reminders reach end of next year (INV-8).
+async function backfill(): Promise<number> {
+  // INV-1/INV-2: use the persisted user timezone so backfilled fire_at values
+  // match those written at creation time (correct offset + dedupe works).
+  const { data: settings } = await supabase
+    .from("settings")
+    .select("timezone")
+    .eq("id", true)
+    .single();
+  const tz = settings?.timezone ?? "UTC";
+
+  const { data: events, error } = await supabase
+    .from("events")
+    .select("*")
+    .not("rrule", "is", null)
+    .is("repeat_end_date", null);
+  if (error) throw error;
+  if (!events || events.length === 0) return 0;
+
+  const limit = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 11, 31, 23, 59, 59));
+  let added = 0;
+
+  for (const ev of events) {
+    const [y, mo, d] = ev.date.split("-").map(Number);
+    const dtstart = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0));
+    const rule = rrulestr(ev.rrule, { dtstart });
+    const occurrences = rule.between(dtstart, limit, true);
+
+    const { data: existing } = await supabase
+      .from("reminders")
+      .select("fire_at")
+      .eq("event_id", ev.id)
+      .eq("kind", "day-of");
+    const existingTimes = new Set((existing ?? []).map((r) => r.fire_at));
+
+    const [hh, mm] = ev.time
+      ? ev.time.split(":").map(Number)
+      : [DEFAULT_HOUR, DEFAULT_MINUTE];
+
+    const newRows = [];
+    for (const occ of occurrences) {
+      const fireAt = wallTimeToUtcIso(
+        occ.getUTCFullYear(),
+        occ.getUTCMonth() + 1,
+        occ.getUTCDate(),
+        hh,
+        mm,
+        tz
+      );
+      if (existingTimes.has(fireAt)) continue;
+      newRows.push({
+        event_id: ev.id,
+        fire_at: fireAt,
+        kind: "day-of",
+        days_before: null,
+        title: ev.title,
+        time: ev.time,
+        location: ev.location,
+        color: ev.color,
+      });
+    }
+
+    if (newRows.length > 0) {
+      await supabase.from("reminders").insert(newRows);
+      added += newRows.length;
+    }
+  }
+
+  return added;
+}
+
+Deno.serve(async (req) => {
+  let mode = "send";
+  try {
+    const body = await req.json();
+    if (body?.mode) mode = body.mode;
+  } catch {
+    // no body → default send
+  }
+
+  try {
+    const count = mode === "backfill" ? await backfill() : await sendDue();
+    return new Response(JSON.stringify({ mode, count }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "error";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
