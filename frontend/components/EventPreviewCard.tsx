@@ -15,7 +15,7 @@ interface EventPreviewCardProps {
 }
 
 const inputClass =
-  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none";
+  "w-full rounded-md border border-border px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none";
 const labelClass = "mb-1 block text-xs font-medium text-gray-500";
 
 export default function EventPreviewCard({
@@ -44,7 +44,7 @@ export default function EventPreviewCard({
 
   return (
     <div
-      className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+      className="rounded-xl border border-border bg-surface p-4 shadow-sm"
       style={{ borderLeft: `4px solid ${event.color}` }}
     >
       <div className="mb-3 flex items-center gap-3">

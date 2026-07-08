@@ -2,16 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Single light theme — warm off-white background, calm blue accent (Q1/Q2). */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #FAFAF7;
+  --foreground: #1C1C1E;
 }
 
 body {

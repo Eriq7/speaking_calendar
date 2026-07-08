@@ -24,6 +24,7 @@ export interface DBReminder {
   kind: ReminderKind;
   days_before: number | null;
   sent: boolean;
+  completed: boolean; // user-acknowledged; independent of sent (push delivery)
   title: string;
   time: string | null;
   location: string | null;
@@ -39,6 +40,14 @@ export interface UpcomingReminder {
   location: string | null;
   color: string;
   kind: ReminderKind;
+  completed: boolean;
+}
+
+// DBEvent enriched with the specific reminder occurrence for DetailModal display.
+export interface DetailEvent extends DBEvent {
+  reminderId: string | null;      // null only if no day-of reminder found for this date
+  reminderCompleted: boolean;
+  isOverdue: boolean;             // date < today && !reminderCompleted
 }
 
 // GET /api/events response

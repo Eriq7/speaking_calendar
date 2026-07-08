@@ -1,15 +1,16 @@
 "use client";
 
-import { DBEvent } from "@/lib/types";
+import { DBEvent, DetailEvent } from "@/lib/types";
 import { formatFriendlyDate, formatTime } from "@/lib/date";
 import { repeatLabel } from "@/lib/repeat";
 
 interface DetailModalProps {
-  title: string; // header, e.g. the clicked date or reminder title
-  events: DBEvent[];
+  title: string;
+  events: DetailEvent[];
   onClose: () => void;
   onEdit: (event: DBEvent) => void;
   onDelete: (id: string) => void;
+  onComplete: (reminderId: string, completed: boolean) => void;
 }
 
 export default function DetailModal({
@@ -18,6 +19,7 @@ export default function DetailModal({
   onClose,
   onEdit,
   onDelete,
+  onComplete,
 }: DetailModalProps) {
   return (
     <div
@@ -25,7 +27,7 @@ export default function DetailModal({
       onClick={onClose}
     >
       <div
-        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-surface p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -47,16 +49,29 @@ export default function DetailModal({
             {events.map((ev) => (
               <div
                 key={ev.id}
-                className="rounded-xl border border-gray-200 p-4"
+                className={`rounded-xl border border-border p-4 ${ev.reminderCompleted ? "opacity-60" : ""}`}
                 style={{ borderLeft: `4px solid ${ev.color}` }}
               >
+                {/* Overdue banner */}
+                {ev.isOverdue && (
+                  <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-red-600">
+                    <span aria-hidden>!</span>
+                    <span>Overdue</span>
+                  </div>
+                )}
+
                 <div className="mb-2 flex items-start justify-between gap-2">
-                  <h3 className="font-medium text-gray-900">{ev.title}</h3>
+                  <h3
+                    className={`font-medium text-gray-900 ${ev.reminderCompleted ? "line-through text-gray-400" : ""}`}
+                  >
+                    {ev.title}
+                  </h3>
                   <span
                     className="mt-1 h-3 w-3 shrink-0 rounded-full"
                     style={{ backgroundColor: ev.color }}
                   />
                 </div>
+
                 <dl className="space-y-1 text-sm text-gray-600">
                   <Row label="When">
                     {formatFriendlyDate(ev.date)} · {formatTime(ev.time)}
@@ -70,11 +85,33 @@ export default function DetailModal({
                     </Row>
                   )}
                 </dl>
-                <div className="mt-3 flex gap-2">
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {/* Complete / Undo */}
+                  {ev.reminderId && (
+                    ev.reminderCompleted ? (
+                      <button
+                        type="button"
+                        onClick={() => onComplete(ev.reminderId!, false)}
+                        className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-600 hover:bg-gray-50"
+                      >
+                        Undo
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onComplete(ev.reminderId!, true)}
+                        className="rounded-md border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50"
+                      >
+                        ✓ Mark as complete
+                      </button>
+                    )
+                  )}
+
                   <button
                     type="button"
                     onClick={() => onEdit(ev)}
-                    className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                    className="rounded-md border border-border px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
                   >
                     Edit
                   </button>

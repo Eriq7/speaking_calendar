@@ -71,6 +71,7 @@ async function sendDue(): Promise<number> {
     .from("reminders")
     .select("id, event_id, fire_at, kind, days_before, title, time, location, color")
     .eq("sent", false)
+    .eq("completed", false)
     .lte("fire_at", nowIso);
   if (error) throw error;
   if (!due || due.length === 0) return 0;

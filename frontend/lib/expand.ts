@@ -1,7 +1,8 @@
 import { rrulestr } from "rrule";
 import type { EventInput, DBReminder } from "./types";
 
-export type NewReminder = Omit<DBReminder, "id" | "event_id" | "sent">;
+// "completed" is omitted because the DB column defaults to false on insert.
+export type NewReminder = Omit<DBReminder, "id" | "event_id" | "sent" | "completed">;
 
 // INV-11: reject timezones that are not valid IANA identifiers.
 export function isValidTimezone(tz: string): boolean {

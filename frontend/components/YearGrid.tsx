@@ -53,22 +53,26 @@ export default function YearGrid({ reminders, onCellClick }: YearGridProps) {
 
   const weeks = useMemo(() => buildWeeks(year), [year]);
 
-  // Map occurrence date -> distinct colors. Only day-of reminders count: an
-  // early reminder fires N days before the event, so that day has no event.
-  const colorsByDate = useMemo(() => {
-    const map = new Map<string, string[]>();
+  // Map date → uncompleted day-of reminder colors (for coloring future cells).
+  // Map date → whether any uncompleted day-of reminder exists (for overdue detection).
+  const { colorsByDate, hasUncompletedByDate } = useMemo(() => {
+    const colors = new Map<string, string[]>();
+    const hasUncompleted = new Map<string, boolean>();
+
     for (const r of reminders) {
-      if (r.kind !== "day-of") continue;
+      // reminders prop already contains only day-of (filtered in GET /api/events)
       const date = isoToLocalDateString(r.fire_at);
-      const list = map.get(date) ?? [];
-      if (!list.includes(r.color)) list.push(r.color);
-      map.set(date, list);
+      if (!r.completed) {
+        const list = colors.get(date) ?? [];
+        if (!list.includes(r.color)) list.push(r.color);
+        colors.set(date, list);
+        hasUncompleted.set(date, true);
+      }
     }
-    return map;
+    return { colorsByDate: colors, hasUncompletedByDate: hasUncompleted };
   }, [reminders]);
 
-  // Month labels: for each week column, show label when the month of its first
-  // in-year day differs from the previous labelled month.
+  // Month labels: show when the month of the first in-year day of a week column changes.
   const monthLabels = useMemo(() => {
     const labels: (string | null)[] = [];
     let lastMonth = -1;
@@ -111,6 +115,7 @@ export default function YearGrid({ reminders, onCellClick }: YearGridProps) {
                   cell={cell}
                   today={today}
                   colors={colorsByDate.get(cell.date) ?? []}
+                  hasUncompletedReminder={hasUncompletedByDate.get(cell.date) ?? false}
                   onClick={() => onCellClick(cell.date)}
                 />
               ))}
@@ -125,30 +130,45 @@ export default function YearGrid({ reminders, onCellClick }: YearGridProps) {
 interface YearCellProps {
   cell: Cell;
   today: string;
-  colors: string[];
+  colors: string[];           // uncompleted day-of reminder colors for this date
+  hasUncompletedReminder: boolean;
   onClick: () => void;
 }
 
-function YearCell({ cell, today, colors, onClick }: YearCellProps) {
+function YearCell({ cell, today, colors, hasUncompletedReminder, onClick }: YearCellProps) {
   if (!cell.inYear) {
     return <div className="h-3 w-3" aria-hidden />;
   }
 
   const isPast = cell.date < today; // INV-12: pure frontend comparison
   const isToday = cell.date === today;
-  const hasColors = colors.length > 0;
 
-  const base =
-    "h-3 w-3 rounded-sm transition-transform hover:scale-125 focus:outline-none";
-  const ring = isToday ? " ring-1 ring-gray-800" : "";
+  const base = "h-3 w-3 rounded-sm transition-transform hover:scale-125 focus:outline-none";
+  // Today gets an accent blue ring regardless of other state.
+  const todayRing = isToday ? " ring-1 ring-accent" : "";
 
-  if (hasColors) {
+  if (isPast) {
+    // Past dates are always gray — reminder colors are suppressed (Q7).
+    // If there are uncompleted reminders on a past date → overdue: add red ring (Q8).
+    const overdueRing = hasUncompletedReminder ? " ring-2 ring-red-500" : "";
     return (
       <button
         type="button"
         title={cell.date}
         onClick={onClick}
-        className={`${base}${ring} relative overflow-hidden`}
+        className={`${base} bg-past-cell${overdueRing}${todayRing}`}
+      />
+    );
+  }
+
+  // Future (including today): show colors if uncompleted reminders exist.
+  if (colors.length > 0) {
+    return (
+      <button
+        type="button"
+        title={cell.date}
+        onClick={onClick}
+        className={`${base}${todayRing} relative overflow-hidden`}
         style={colors.length === 1 ? { backgroundColor: colors[0] } : undefined}
       >
         {colors.length > 1 && <Quadrants colors={colors} />}
@@ -156,18 +176,18 @@ function YearCell({ cell, today, colors, onClick }: YearCellProps) {
     );
   }
 
-  const bg = isPast ? "bg-gray-200" : "bg-gray-100";
+  // Future, no reminder: white with light border.
   return (
     <button
       type="button"
       title={cell.date}
       onClick={onClick}
-      className={`${base} ${bg}${ring}`}
+      className={`${base} border border-border bg-surface${todayRing}`}
     />
   );
 }
 
-// Up to 4 quadrants; if >4 distinct colors, show "+N" overlay.
+// Up to 4 quadrant color blocks; "+N" overlay for overflow.
 function Quadrants({ colors }: { colors: string[] }) {
   const shown = colors.slice(0, 4);
   const overflow = colors.length - 4;

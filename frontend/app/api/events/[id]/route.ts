@@ -71,12 +71,14 @@ export async function PUT(
     );
   }
 
-  // INV-5: drop unsent reminders, then re-expand from the updated event.
+  // INV-5: drop unsent AND uncompleted reminders, then re-expand from the updated event.
+  // Completed occurrences are preserved so the user's history is not erased on edit.
   const { error: delErr } = await supabase
     .from("reminders")
     .delete()
     .eq("event_id", id)
-    .eq("sent", false);
+    .eq("sent", false)
+    .eq("completed", false);
   if (delErr) {
     return NextResponse.json({ error: delErr.message }, { status: 500 });
   }

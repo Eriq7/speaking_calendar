@@ -27,16 +27,19 @@ export async function GET() {
       .gte("date", yearStart)
       .lte("date", yearEnd)
       .order("date", { ascending: true }),
+    // Grid reminders: all day-of occurrences for the year, regardless of sent/completed,
+    // so YearGrid can show colors (uncompleted) and overdue rings (past + uncompleted).
     supabase
       .from("reminders")
       .select("*")
-      .eq("sent", false)
+      .eq("kind", "day-of")
       .gte("fire_at", `${yearStart}T00:00:00Z`)
       .lte("fire_at", `${yearEnd}T23:59:59Z`),
+    // Upcoming: reminders not yet completed that are still in the future.
     supabase
       .from("reminders")
-      .select("id, event_id, fire_at, title, time, location, color, kind")
-      .eq("sent", false)
+      .select("id, event_id, fire_at, title, time, location, color, kind, completed")
+      .eq("completed", false)
       .gt("fire_at", nowIso)
       .order("fire_at", { ascending: true })
       .limit(UPCOMING_LIMIT),

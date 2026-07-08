@@ -1,5 +1,7 @@
 // PWA registration + Web Push subscription.
-// INV-13: notification permission is requested on first app load.
+// INV-13: notification permission MUST be requested from a user gesture (button click).
+//   registerServiceWorker() is safe to call on page load.
+//   enableNotifications()   must be called from a click handler.
 
 function urlBase64ToUint8Array(base64String: string): BufferSource {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -22,11 +24,12 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   }
 }
 
-// Requests permission (INV-13) and, if a VAPID key is configured, subscribes
-// to Web Push and posts the subscription to the backend.
-export async function initPushNotifications(): Promise<void> {
-  if (typeof window === "undefined") return;
-  if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
+// Must be called from a user gesture (e.g. button onClick) so that Chrome and
+// Safari show the real permission modal instead of silently ignoring the request.
+// Returns the resulting NotificationPermission, or null if unsupported.
+export async function enableNotifications(): Promise<NotificationPermission | null> {
+  if (typeof window === "undefined") return null;
+  if (!("Notification" in window) || !("serviceWorker" in navigator)) return null;
 
   const registration = await registerServiceWorker();
 
@@ -34,10 +37,10 @@ export async function initPushNotifications(): Promise<void> {
   if (permission === "default") {
     permission = await Notification.requestPermission();
   }
-  if (permission !== "granted" || !registration) return;
+  if (permission !== "granted" || !registration) return permission;
 
   const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  if (!vapidKey || !("PushManager" in window)) return;
+  if (!vapidKey || !("PushManager" in window)) return permission;
 
   try {
     const existing = await registration.pushManager.getSubscription();
@@ -56,4 +59,6 @@ export async function initPushNotifications(): Promise<void> {
   } catch {
     // Subscription failures are non-fatal for the UI.
   }
+
+  return permission;
 }

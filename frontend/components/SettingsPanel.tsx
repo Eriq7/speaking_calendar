@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Settings } from "@/lib/types";
+import { enableNotifications } from "@/lib/push";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -11,12 +12,10 @@ interface SettingsPanelProps {
 
 const EXAMPLES = [
   "Dentist appointment next Tuesday at 9am, remind me 1 day before",
-  "Team standup every weekday at 10am",
-  "Mom's birthday on August 12, remind me 3 days early",
   "Gym Monday, Wednesday and Friday at 7pm",
   "Pay rent on the 1st of every month",
-  "Flight to Tokyo on Sep 3 at 6:30pm from SFO",
   "Water the plants every 3 days",
+  "Flight to Tokyo on Sep 3 at 6:30pm from SFO",
 ];
 
 export default function SettingsPanel({
@@ -28,6 +27,7 @@ export default function SettingsPanel({
   const [butlerName, setButlerName] = useState("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [notifStatus, setNotifStatus] = useState<"idle" | "granted" | "denied">("idle");
 
   useEffect(() => {
     if (!open || loaded) return;
@@ -40,6 +40,15 @@ export default function SettingsPanel({
       })
       .catch(() => setLoaded(true));
   }, [open, loaded]);
+
+  // Reflect current permission status whenever the panel opens.
+  useEffect(() => {
+    if (!open) return;
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "granted") setNotifStatus("granted");
+    else if (Notification.permission === "denied") setNotifStatus("denied");
+    else setNotifStatus("idle");
+  }, [open]);
 
   const save = async () => {
     setSaving(true);
@@ -57,12 +66,18 @@ export default function SettingsPanel({
     }
   };
 
+  const handleEnableNotifications = async () => {
+    const perm = await enableNotifications();
+    if (perm === "granted") setNotifStatus("granted");
+    else if (perm === "denied") setNotifStatus("denied");
+  };
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
       <aside
-        className="h-full w-full max-w-sm overflow-y-auto bg-white p-6 shadow-xl"
+        className="h-full w-full max-w-sm overflow-y-auto bg-surface p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-6 flex items-center justify-between">
@@ -77,47 +92,70 @@ export default function SettingsPanel({
           </button>
         </div>
 
-        <section className="mb-8">
+        {/* Names */}
+        <section className="mb-6">
           <h3 className="mb-2 text-sm font-medium text-gray-700">Your names</h3>
           <label className="mb-1 block text-xs text-gray-500">Your name</label>
           <input
             value={userName}
             onChange={(e) => setUserName(e.target.value)}
             placeholder="e.g. Vivian"
-            className="mb-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none"
+            className="mb-3 w-full rounded-md border border-border px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none"
           />
           <label className="mb-1 block text-xs text-gray-500">Butler name</label>
           <input
             value={butlerName}
             onChange={(e) => setButlerName(e.target.value)}
             placeholder="e.g. Alfred"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none"
+            className="w-full rounded-md border border-border px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none"
           />
           <button
             type="button"
             onClick={save}
             disabled={saving}
-            className="mt-3 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            className="mt-3 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save"}
           </button>
         </section>
 
+        {/* Notifications */}
+        <section className="mb-6">
+          <h3 className="mb-2 text-sm font-medium text-gray-700">Notifications</h3>
+          {notifStatus === "granted" ? (
+            <p className="text-xs text-green-700">✓ Notifications are enabled.</p>
+          ) : notifStatus === "denied" ? (
+            <p className="text-xs text-gray-500">
+              Notifications are blocked. Enable them in your browser settings.
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={handleEnableNotifications}
+              className="rounded-md border border-accent px-3 py-1.5 text-sm text-accent hover:bg-blue-50"
+            >
+              🔔 Enable notifications
+            </button>
+          )}
+        </section>
+
+        {/* How to use */}
         <section>
           <h3 className="mb-2 text-sm font-medium text-gray-700">How to use</h3>
-          <p className="mb-3 text-xs text-gray-500">
-            Just type what you want to remember in plain English. Try things like:
-          </p>
           <ul className="flex flex-col gap-2">
             {EXAMPLES.map((ex) => (
               <li
                 key={ex}
                 className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700"
               >
-                “{ex}”
+                &ldquo;{ex}&rdquo;
               </li>
             ))}
           </ul>
+          <p className="mt-3 text-xs text-gray-500 italic">
+            Talk to me the way you&apos;d talk to your butler — in plain, everyday words.
+            I&apos;ll sort out the dates, repeats, and reminders for you.
+          </p>
         </section>
       </aside>
     </div>

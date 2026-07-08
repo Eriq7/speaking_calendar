@@ -2,9 +2,10 @@
 
 export const dynamic = "force-dynamic";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DBEvent,
+  DetailEvent,
   EventInput,
   EventsResponse,
   ParseResponse,
@@ -17,7 +18,7 @@ import {
   isoToLocalDateString,
   formatFriendlyDate,
 } from "@/lib/date";
-import { initPushNotifications } from "@/lib/push";
+import { registerServiceWorker, enableNotifications } from "@/lib/push";
 import YearGrid from "@/components/YearGrid";
 import UpcomingList from "@/components/UpcomingList";
 import EventPreviewCard from "@/components/EventPreviewCard";
@@ -40,12 +41,16 @@ function dbEventToInput(ev: DBEvent): EventInput {
 
 interface DetailState {
   title: string;
-  events: DBEvent[];
+  events: DetailEvent[];
 }
 
 interface Draft {
   uid: string;
   event: EventInput;
+}
+
+interface Toast {
+  reminderId: string;
 }
 
 function toDraft(event: EventInput): Draft {
@@ -67,14 +72,26 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detail, setDetail] = useState<DetailState | null>(null);
 
+  // Notification banner state (null = not yet checked, avoids SSR mismatch)
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Undo toast
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadEvents = useCallback(async () => {
     const res = await fetch("/api/events");
     if (res.ok) setData(await res.json());
   }, []);
 
-  // INV-13: request notification permission on first load.
+  // On mount: register SW (safe without user gesture) and read notification permission.
   useEffect(() => {
-    initPushNotifications();
+    if (typeof window === "undefined") return;
+    registerServiceWorker().catch(() => {});
+    if ("Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
   }, []);
 
   useEffect(() => {
@@ -101,6 +118,16 @@ export default function Home() {
       ...patch,
     }));
 
+  // ── Notification enable (called from banner button — user gesture) ──────────
+  const handleEnableNotifications = async () => {
+    const perm = await enableNotifications();
+    if (perm) setNotifPermission(perm);
+  };
+
+  const showNotifBanner =
+    notifPermission === "default" && !bannerDismissed;
+
+  // ── Parse + confirm ─────────────────────────────────────────────────────────
   const parse = async () => {
     if (!text.trim()) return;
     setParsing(true);
@@ -169,24 +196,91 @@ export default function Home() {
       return rest.length ? rest : null;
     });
 
+  // ── Mark as complete (per reminder occurrence) ───────────────────────────────
+  const patchComplete = useCallback(async (reminderId: string, completed: boolean) => {
+    await fetch(`/api/reminders/${reminderId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed }),
+    });
+    // Optimistically update the detail modal state.
+    setDetail((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        events: prev.events.map((ev) =>
+          ev.reminderId === reminderId
+            ? { ...ev, reminderCompleted: completed, isOverdue: ev.isOverdue && !completed }
+            : ev
+        ),
+      };
+    });
+    await loadEvents();
+  }, [loadEvents]);
+
+  const completeReminder = useCallback(async (reminderId: string) => {
+    await patchComplete(reminderId, true);
+    // Show undo toast for ~5 s.
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ reminderId });
+    toastTimerRef.current = setTimeout(() => setToast(null), 5000);
+  }, [patchComplete]);
+
+  const undoComplete = useCallback(async () => {
+    if (!toast) return;
+    const id = toast.reminderId;
+    setToast(null);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    await patchComplete(id, false);
+  }, [toast, patchComplete]);
+
+  // onComplete handler for both DetailModal and UpcomingList.
+  const handleComplete = useCallback((reminderId: string, completed: boolean) => {
+    if (completed) {
+      completeReminder(reminderId);
+    } else {
+      patchComplete(reminderId, false);
+    }
+  }, [completeReminder, patchComplete]);
+
+  // ── Detail modal helpers ─────────────────────────────────────────────────────
   const openDetailByDate = (date: string) => {
     if (!data) return;
-    // Match day-of reminders only, consistent with the grid coloring.
-    const eventIds = new Set(
-      data.reminders
-        .filter(
-          (r) => r.kind === "day-of" && isoToLocalDateString(r.fire_at) === date
-        )
-        .map((r) => r.event_id)
-    );
-    const events = data.events.filter((e) => eventIds.has(e.id));
-    if (events.length === 0) return;
-    setDetail({ title: formatFriendlyDate(date), events });
+    const today = todayLocalString();
+    // Find all day-of reminders for this date (completed or not) for undo support.
+    const remindersByEventId = new Map<string, typeof data.reminders[0]>();
+    for (const r of data.reminders) {
+      if (isoToLocalDateString(r.fire_at) === date) {
+        remindersByEventId.set(r.event_id, r);
+      }
+    }
+    const detailEvents: DetailEvent[] = data.events
+      .filter((e) => remindersByEventId.has(e.id))
+      .map((e) => {
+        const r = remindersByEventId.get(e.id)!;
+        return {
+          ...e,
+          reminderId: r.id,
+          reminderCompleted: r.completed,
+          isOverdue: date < today && !r.completed,
+        };
+      });
+    if (detailEvents.length === 0) return;
+    setDetail({ title: formatFriendlyDate(date), events: detailEvents });
   };
 
   const openDetailByReminder = (r: UpcomingReminder) => {
     if (!data) return;
-    const events = data.events.filter((e) => e.id === r.event_id);
+    const today = todayLocalString();
+    const events: DetailEvent[] = data.events
+      .filter((e) => e.id === r.event_id)
+      .map((e) => ({
+        ...e,
+        reminderId: r.id,
+        reminderCompleted: r.completed,
+        isOverdue: isoToLocalDateString(r.fire_at) < today && !r.completed,
+      }));
+    if (events.length === 0) return;
     setDetail({ title: r.title, events });
   };
 
@@ -209,12 +303,36 @@ export default function Home() {
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
+      {/* Notification banner (Q5) */}
+      {showNotifBanner && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+          <span className="flex-1 text-blue-800">
+            🔔 Enable notifications so I can remind you on time.
+          </span>
+          <button
+            type="button"
+            onClick={handleEnableNotifications}
+            className="shrink-0 rounded-md bg-accent px-3 py-1 text-sm font-medium text-white hover:bg-accent-hover"
+          >
+            Enable
+          </button>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            aria-label="Dismiss"
+            className="shrink-0 text-blue-400 hover:text-blue-600"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <header className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">
             Hello{userSuffix}.
           </h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-1 text-sm text-gray-500">
             I&apos;m {butler}. What future reminders can I set for you?
           </p>
         </div>
@@ -222,7 +340,7 @@ export default function Home() {
           type="button"
           onClick={() => setSettingsOpen(true)}
           aria-label="Open settings"
-          className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
+          className="rounded-full p-2 text-gray-400 hover:bg-gray-100"
         >
           <GearIcon />
         </button>
@@ -234,14 +352,14 @@ export default function Home() {
           onChange={(e) => setText(e.target.value)}
           placeholder="e.g. Dentist next Tuesday at 9am, remind me 1 day before"
           rows={3}
-          className="w-full rounded-xl border border-gray-300 p-3 text-sm text-gray-900 focus:border-gray-500 focus:outline-none"
+          className="w-full rounded-xl border border-border bg-surface p-3 text-sm text-gray-900 focus:border-accent focus:outline-none"
         />
         <div className="mt-2 flex items-center gap-3">
           <button
             type="button"
             onClick={parse}
             disabled={parsing || !text.trim()}
-            className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            className="rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
           >
             {parsing ? "Reading…" : "Add reminders"}
           </button>
@@ -279,7 +397,7 @@ export default function Home() {
                 setDrafts(null);
                 setEditingId(null);
               }}
-              className="rounded-lg border border-gray-300 px-5 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              className="rounded-lg border border-border px-5 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               Cancel
             </button>
@@ -302,6 +420,7 @@ export default function Home() {
         <UpcomingList
           upcoming={data?.upcoming ?? []}
           onSelect={openDetailByReminder}
+          onComplete={(id) => handleComplete(id, true)}
         />
       </section>
 
@@ -312,6 +431,7 @@ export default function Home() {
           onClose={() => setDetail(null)}
           onEdit={startEdit}
           onDelete={deleteEvent}
+          onComplete={handleComplete}
         />
       )}
 
@@ -320,6 +440,20 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
         onSaved={mergeSettings}
       />
+
+      {/* Undo toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-5 py-3 text-sm text-white shadow-lg">
+          <span>Marked as complete</span>
+          <button
+            type="button"
+            onClick={undoComplete}
+            className="font-semibold text-blue-300 hover:text-blue-200"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </main>
   );
 }
