@@ -6,8 +6,8 @@
 //   { "mode": "backfill" } — extend open-ended recurring reminders to end of next year (INV-8)
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import webpush from "npm:web-push@3.6.7";
-import { rrulestr } from "npm:rrule@2.8.1";
+import * as webpush from "jsr:@negrel/webpush";
+import { rrulestr } from "https://esm.sh/rrule@2.8.1";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -18,11 +18,42 @@ const VAPID_MAILTO = Deno.env.get("VAPID_MAILTO") ?? "mailto:admin@example.com";
 const DEFAULT_HOUR = 9;
 const DEFAULT_MINUTE = 0;
 
-webpush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC, VAPID_PRIVATE);
-
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+
+// Convert raw base64url VAPID keys → JWK, then import for Web Crypto.
+// Public key is 65 bytes: 0x04 || X(32) || Y(32).
+// Private key is 32 bytes: d.
+function base64urlToBytes(b64url: string): Uint8Array {
+  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = (4 - (b64.length % 4)) % 4;
+  return Uint8Array.from(atob(b64 + "=".repeat(pad)), (c) => c.charCodeAt(0));
+}
+
+function bytesToBase64url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+}
+
+async function buildAppServer(): Promise<webpush.ApplicationServer> {
+  const pub = base64urlToBytes(VAPID_PUBLIC);
+  const priv = base64urlToBytes(VAPID_PRIVATE);
+  const jwk: JsonWebKey = {
+    kty: "EC",
+    crv: "P-256",
+    x: bytesToBase64url(pub.slice(1, 33)),
+    y: bytesToBase64url(pub.slice(33, 65)),
+    d: bytesToBase64url(priv),
+  };
+  const vapidKeys = await webpush.importVapidKeys(jwk, { extractable: false });
+  return webpush.ApplicationServer.new({
+    contactInformation: VAPID_MAILTO,
+    vapidKeys,
+  });
+}
 
 interface ReminderRow {
   id: string;
@@ -89,6 +120,7 @@ async function sendDue(): Promise<number> {
     .select("endpoint, p256dh, auth");
   const subscriptions = (subs ?? []) as Subscription[];
 
+  const appServer = await buildAppServer();
   const staleEndpoints = new Set<string>();
 
   for (const reminder of due as ReminderRow[]) {
@@ -98,17 +130,17 @@ async function sendDue(): Promise<number> {
     const results = await Promise.all(
       subscriptions.map(async (sub) => {
         try {
-          await webpush.sendNotification(
-            {
-              endpoint: sub.endpoint,
-              keys: { p256dh: sub.p256dh, auth: sub.auth },
-            },
-            payload
-          );
-          return true;
-        } catch (err) {
-          const status = (err as { statusCode?: number }).statusCode;
-          if (status === 404 || status === 410) staleEndpoints.add(sub.endpoint);
+          const subscriber = appServer.subscribe({
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth },
+          });
+          const resp = await subscriber.pushTextMessage(payload, {});
+          if (resp.status === 404 || resp.status === 410) {
+            staleEndpoints.add(sub.endpoint);
+            return false;
+          }
+          return resp.ok;
+        } catch {
           return false;
         }
       })
