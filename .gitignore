@@ -18,5 +18,8 @@ grill_me_decision_making_process.md
 # Supabase setup (contains secrets)
 supabase/vault_setup.sql
 
+# Supabase temp files
+supabase/.temp/
+
 # OS
 .DS_Store
