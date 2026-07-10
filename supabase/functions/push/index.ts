@@ -39,16 +39,18 @@ function bytesToBase64url(bytes: Uint8Array): string {
 }
 
 async function buildAppServer(): Promise<webpush.ApplicationServer> {
-  const pub = base64urlToBytes(VAPID_PUBLIC);
-  const priv = base64urlToBytes(VAPID_PRIVATE);
-  const jwk: JsonWebKey = {
-    kty: "EC",
-    crv: "P-256",
-    x: bytesToBase64url(pub.slice(1, 33)),
-    y: bytesToBase64url(pub.slice(33, 65)),
-    d: bytesToBase64url(priv),
-  };
-  const vapidKeys = await webpush.importVapidKeys(jwk, { extractable: false });
+  const pub = base64urlToBytes(VAPID_PUBLIC);   // 65B: 0x04 || X(32) || Y(32)
+  const priv = base64urlToBytes(VAPID_PRIVATE); // 32B: d
+  const x = bytesToBase64url(pub.slice(1, 33));
+  const y = bytesToBase64url(pub.slice(33, 65));
+  const d = bytesToBase64url(priv);
+  const vapidKeys = await webpush.importVapidKeys(
+    {
+      publicKey: { kty: "EC", crv: "P-256", x, y },
+      privateKey: { kty: "EC", crv: "P-256", x, y, d },
+    },
+    { extractable: false }
+  );
   return webpush.ApplicationServer.new({
     contactInformation: VAPID_MAILTO,
     vapidKeys,
@@ -95,7 +97,14 @@ function buildMessage(
   };
 }
 
-async function sendDue(): Promise<number> {
+interface SendResult {
+  count: number;
+  delivered: number;
+  failed: number;
+  error?: string;
+}
+
+async function sendDue(): Promise<SendResult> {
   const nowIso = new Date().toISOString();
 
   const { data: due, error } = await supabase
@@ -105,7 +114,7 @@ async function sendDue(): Promise<number> {
     .eq("completed", false)
     .lte("fire_at", nowIso);
   if (error) throw error;
-  if (!due || due.length === 0) return 0;
+  if (!due || due.length === 0) return { count: 0, delivered: 0, failed: 0 };
 
   const { data: settings } = await supabase
     .from("settings")
@@ -122,6 +131,9 @@ async function sendDue(): Promise<number> {
 
   const appServer = await buildAppServer();
   const staleEndpoints = new Set<string>();
+  let totalDelivered = 0;
+  let totalFailed = 0;
+  let lastError: string | undefined;
 
   for (const reminder of due as ReminderRow[]) {
     const message = buildMessage(reminder, userName, butlerName);
@@ -134,17 +146,20 @@ async function sendDue(): Promise<number> {
             endpoint: sub.endpoint,
             keys: { p256dh: sub.p256dh, auth: sub.auth },
           });
-          const resp = await subscriber.pushTextMessage(payload, {});
-          if (resp.status === 404 || resp.status === 410) {
-            staleEndpoints.add(sub.endpoint);
-            return false;
-          }
-          return resp.ok;
-        } catch {
+          await subscriber.pushTextMessage(payload, {});
+          return true;
+        } catch (err) {
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404 || status === 410) staleEndpoints.add(sub.endpoint);
+          lastError = status ? `push ${status}` : String(err);
           return false;
         }
       })
     );
+
+    const succeeded = results.filter(Boolean).length;
+    totalDelivered += succeeded;
+    totalFailed += results.length - succeeded;
 
     // INV-4: mark sent only after at least one successful delivery, so an
     // undelivered reminder (no subscribers / transient failure) is retried
@@ -164,7 +179,7 @@ async function sendDue(): Promise<number> {
       .in("endpoint", [...staleEndpoints]);
   }
 
-  return due.length;
+  return { count: due.length, delivered: totalDelivered, failed: totalFailed, error: lastError };
 }
 
 // INV-1 / INV-7: convert a local wall time in `tz` to a UTC ISO string.
@@ -281,10 +296,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const count = mode === "backfill" ? await backfill() : await sendDue();
-    return new Response(JSON.stringify({ mode, count }), {
-      headers: { "Content-Type": "application/json" },
-    });
+    if (mode === "backfill") {
+      const count = await backfill();
+      return new Response(JSON.stringify({ mode, count }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } else {
+      const result = await sendDue();
+      return new Response(JSON.stringify({ mode, ...result }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "error";
     return new Response(JSON.stringify({ error: message }), {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Settings } from "@/lib/types";
-import { enableNotifications } from "@/lib/push";
+import { enableNotifications, isIOS, isIOSChrome, isStandalone } from "@/lib/push";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -122,20 +122,55 @@ export default function SettingsPanel({
         {/* Notifications */}
         <section className="mb-6">
           <h3 className="mb-2 text-sm font-medium text-gray-700">Notifications</h3>
-          {notifStatus === "granted" ? (
-            <p className="text-xs text-green-700">✓ Notifications are enabled.</p>
+          {isIOSChrome() ? (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800 leading-relaxed">
+              <p className="font-medium mb-1">📱 iPhone requires Safari</p>
+              <p>Chrome on iPhone cannot send notifications. To get reminders:</p>
+              <ol className="mt-1.5 ml-3 list-decimal space-y-1">
+                <li>Open this page in <strong>Safari</strong></li>
+                <li>Tap the share button <strong>⎙</strong> at the bottom</li>
+                <li>Tap <strong>&ldquo;Add to Home Screen&rdquo;</strong></li>
+                <li>Open the app from your Home Screen and enable notifications there</li>
+              </ol>
+            </div>
+          ) : isIOS() && !isStandalone() ? (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
+              <p className="font-medium mb-1">📲 Add to Home Screen first</p>
+              <p>To receive notifications on iPhone:</p>
+              <ol className="mt-1.5 ml-3 list-decimal space-y-1">
+                <li>Tap the share button <strong>⎙</strong> at the bottom of Safari</li>
+                <li>Tap <strong>&ldquo;Add to Home Screen&rdquo;</strong></li>
+                <li>Open the app from your Home Screen — notifications will be available there</li>
+              </ol>
+            </div>
+          ) : notifStatus === "granted" ? (
+            <div>
+              <p className="text-xs text-green-700">✓ Notifications are enabled.</p>
+              {isIOS() && (
+                <p className="mt-1.5 text-xs text-gray-500">
+                  If notifications aren&apos;t showing up, check: <strong>iPhone Settings → Safari → Notifications → Talk Reminder</strong> and make sure it&apos;s set to Allow.
+                </p>
+              )}
+            </div>
           ) : notifStatus === "denied" ? (
             <p className="text-xs text-gray-500">
               Notifications are blocked. Enable them in your browser settings.
             </p>
           ) : (
-            <button
-              type="button"
-              onClick={handleEnableNotifications}
-              className="rounded-md border border-accent px-3 py-1.5 text-sm text-accent hover:bg-blue-50"
-            >
-              🔔 Enable notifications
-            </button>
+            <div>
+              <button
+                type="button"
+                onClick={handleEnableNotifications}
+                className="rounded-md border border-accent px-3 py-1.5 text-sm text-accent hover:bg-blue-50"
+              >
+                🔔 Enable notifications
+              </button>
+              {isIOS() && (
+                <p className="mt-2 text-xs text-gray-500">
+                  After allowing, also check: <strong>iPhone Settings → Safari → Notifications</strong> is turned on.
+                </p>
+              )}
+            </div>
           )}
         </section>
 

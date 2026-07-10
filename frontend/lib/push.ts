@@ -3,6 +3,25 @@
 //   registerServiceWorker() is safe to call on page load.
 //   enableNotifications()   must be called from a click handler.
 
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iPhone|iPad|iPod/.test(navigator.userAgent);
+}
+
+// Chrome on iOS uses "CriOS" in the user agent (not "Chrome").
+export function isIOSChrome(): boolean {
+  return isIOS() && /CriOS/.test(navigator.userAgent);
+}
+
+// True when the app is running as an installed PWA (added to Home Screen).
+export function isStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}
+
 function urlBase64ToUint8Array(base64String: string): BufferSource {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");

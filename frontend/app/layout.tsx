@@ -14,9 +14,12 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "AI Reminders",
+  title: "Talk Reminder",
   description: "Turn plain English into calendar reminders.",
   manifest: "/manifest.json",
+  icons: {
+    apple: "/icon-512.png",
+  },
 };
 
 export const viewport: Viewport = {

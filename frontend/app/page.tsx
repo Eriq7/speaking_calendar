@@ -18,7 +18,7 @@ import {
   isoToLocalDateString,
   formatFriendlyDate,
 } from "@/lib/date";
-import { registerServiceWorker, enableNotifications } from "@/lib/push";
+import { registerServiceWorker, enableNotifications, isIOS, isIOSChrome, isStandalone } from "@/lib/push";
 import YearGrid from "@/components/YearGrid";
 import UpcomingList from "@/components/UpcomingList";
 import EventPreviewCard from "@/components/EventPreviewCard";
@@ -124,8 +124,10 @@ export default function Home() {
     if (perm) setNotifPermission(perm);
   };
 
+  // Show banner when: permission not yet decided, OR on iOS but not yet in standalone mode
   const showNotifBanner =
-    notifPermission === "default" && !bannerDismissed;
+    !bannerDismissed &&
+    (notifPermission === "default" || (isIOS() && !isStandalone() && notifPermission !== null));
 
   // ── Parse + confirm ─────────────────────────────────────────────────────────
   const parse = async () => {
@@ -303,27 +305,38 @@ export default function Home() {
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
-      {/* Notification banner (Q5) */}
+      {/* Notification banner */}
       {showNotifBanner && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
-          <span className="flex-1 text-blue-800">
-            🔔 Enable notifications so I can remind you on time.
-          </span>
-          <button
-            type="button"
-            onClick={handleEnableNotifications}
-            className="shrink-0 rounded-md bg-accent px-3 py-1 text-sm font-medium text-white hover:bg-accent-hover"
-          >
-            Enable
-          </button>
-          <button
-            type="button"
-            onClick={() => setBannerDismissed(true)}
-            aria-label="Dismiss"
-            className="shrink-0 text-blue-400 hover:text-blue-600"
-          >
-            ✕
-          </button>
+        <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${isIOSChrome() ? "border-amber-200 bg-amber-50" : "border-blue-200 bg-blue-50"}`}>
+          {isIOSChrome() ? (
+            <div className="flex items-start gap-3">
+              <span className="flex-1 text-amber-800">
+                📱 <strong>Chrome on iPhone can&apos;t send notifications.</strong> Open this page in <strong>Safari</strong>, tap <strong>⎙ Share → Add to Home Screen</strong>, then enable notifications from the Home Screen app.
+              </span>
+              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-amber-400 hover:text-amber-600">✕</button>
+            </div>
+          ) : isIOS() && !isStandalone() ? (
+            <div className="flex items-start gap-3">
+              <span className="flex-1 text-blue-800">
+                📲 To get reminders on iPhone: tap <strong>⎙ Share → Add to Home Screen</strong>, then open the app from your Home Screen.
+              </span>
+              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-blue-400 hover:text-blue-600">✕</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <span className="flex-1 text-blue-800">
+                🔔 Enable notifications so I can remind you on time.
+              </span>
+              <button
+                type="button"
+                onClick={handleEnableNotifications}
+                className="shrink-0 rounded-md bg-accent px-3 py-1 text-sm font-medium text-white hover:bg-accent-hover"
+              >
+                Enable
+              </button>
+              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-blue-400 hover:text-blue-600">✕</button>
+            </div>
+          )}
         </div>
       )}
 
