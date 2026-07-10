@@ -23,3 +23,6 @@ supabase/.temp/
 
 # OS
 .DS_Store
+
+# Personal notes
+to_do.md
