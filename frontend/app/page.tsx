@@ -85,12 +85,16 @@ export default function Home() {
     if (res.ok) setData(await res.json());
   }, []);
 
-  // On mount: register SW (safe without user gesture) and read notification permission.
+  // On mount: register SW and re-subscribe to push if permission was already granted
+  // (handles the case where the user logged out then back in).
   useEffect(() => {
     if (typeof window === "undefined") return;
     registerServiceWorker().catch(() => {});
     if ("Notification" in window) {
       setNotifPermission(Notification.permission);
+      if (Notification.permission === "granted") {
+        enableNotifications().catch(() => {});
+      }
     }
   }, []);
 

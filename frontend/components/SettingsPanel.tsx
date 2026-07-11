@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Settings } from "@/lib/types";
 import { enableNotifications, isIOS, isIOSChrome, isStandalone } from "@/lib/push";
+import { getBrowserClient } from "@/lib/supabase-browser";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -28,6 +29,7 @@ export default function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [notifStatus, setNotifStatus] = useState<"idle" | "granted" | "denied">("idle");
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (!open || loaded) return;
@@ -70,6 +72,21 @@ export default function SettingsPanel({
     const perm = await enableNotifications();
     if (perm === "granted") setNotifStatus("granted");
     else if (perm === "denied") setNotifStatus("denied");
+  };
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    // Unsubscribe push on this device and remove from DB.
+    try {
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
+    } catch {}
+    await fetch("/api/subscribe", { method: "DELETE" }).catch(() => {});
+    await getBrowserClient().auth.signOut();
+    window.location.href = "/login";
   };
 
   if (!open) return null;
@@ -172,6 +189,18 @@ export default function SettingsPanel({
               )}
             </div>
           )}
+        </section>
+
+        {/* Sign out */}
+        <section className="mb-6">
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="w-full rounded-md border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            {signingOut ? "Signing out…" : "Sign Out"}
+          </button>
         </section>
 
         {/* How to use */}

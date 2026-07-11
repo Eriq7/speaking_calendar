@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServiceClient } from "@/lib/supabase";
+import { getServerClient } from "@/lib/supabase";
 import { expandReminders, isValidTimezone } from "@/lib/expand";
 import type {
   CreateEventsRequest,
@@ -14,7 +14,10 @@ export const runtime = "nodejs";
 const UPCOMING_LIMIT = 5;
 
 export async function GET() {
-  const supabase = getServiceClient();
+  const supabase = getServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const year = new Date().getUTCFullYear();
   const yearStart = `${year}-01-01`;
   const yearEnd = `${year}-12-31`;
@@ -27,15 +30,12 @@ export async function GET() {
       .gte("date", yearStart)
       .lte("date", yearEnd)
       .order("date", { ascending: true }),
-    // Grid reminders: all day-of occurrences for the year, regardless of sent/completed,
-    // so YearGrid can show colors (uncompleted) and overdue rings (past + uncompleted).
     supabase
       .from("reminders")
       .select("*")
       .eq("kind", "day-of")
       .gte("fire_at", `${yearStart}T00:00:00Z`)
       .lte("fire_at", `${yearEnd}T23:59:59Z`),
-    // Upcoming: reminders not yet completed that are still in the future.
     supabase
       .from("reminders")
       .select("id, event_id, fire_at, title, time, location, color, kind, completed")
@@ -46,9 +46,7 @@ export async function GET() {
   ]);
 
   const error = eventsRes.error || remindersRes.error || upcomingRes.error;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const res: EventsResponse = {
     events: (eventsRes.data ?? []) as DBEvent[],
@@ -59,6 +57,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const supabase = getServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   let body: CreateEventsRequest;
   try {
     body = await req.json();
@@ -77,13 +79,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid timezone" }, { status: 400 });
   }
 
-  const supabase = getServiceClient();
   const eventIds: string[] = [];
 
   for (const event of events) {
     const { data: inserted, error: insertErr } = await supabase
       .from("events")
       .insert({
+        user_id: user.id,
         title: event.title,
         note: event.note,
         date: event.date,
@@ -110,15 +112,12 @@ export async function POST(req: NextRequest) {
     const reminders = expandReminders(event, timezone).map((r) => ({
       ...r,
       event_id: eventId,
+      user_id: user.id,
     }));
 
     if (reminders.length > 0) {
-      const { error: remErr } = await supabase
-        .from("reminders")
-        .insert(reminders);
-      if (remErr) {
-        return NextResponse.json({ error: remErr.message }, { status: 500 });
-      }
+      const { error: remErr } = await supabase.from("reminders").insert(reminders);
+      if (remErr) return NextResponse.json({ error: remErr.message }, { status: 500 });
     }
   }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServiceClient } from "@/lib/supabase";
+import { getServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -10,7 +10,12 @@ interface SubscribeBody {
   };
 }
 
+// POST /api/subscribe — register or refresh a push subscription for the current user.
 export async function POST(req: NextRequest) {
+  const supabase = getServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   let body: SubscribeBody;
   try {
     body = await req.json();
@@ -26,11 +31,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = getServiceClient();
   const { error } = await supabase
     .from("subscriptions")
     .upsert(
       {
+        user_id: user.id,
         endpoint: sub.endpoint,
         p256dh: sub.keys.p256dh,
         auth: sub.keys.auth,
@@ -38,9 +43,21 @@ export async function POST(req: NextRequest) {
       { onConflict: "endpoint" }
     );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ success: true });
+}
 
+// DELETE /api/subscribe — remove all push subscriptions for the current user (on sign-out).
+export async function DELETE() {
+  const supabase = getServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { error } = await supabase
+    .from("subscriptions")
+    .delete()
+    .eq("user_id", user.id);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ success: true });
 }

@@ -22,9 +22,6 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// Convert raw base64url VAPID keys → JWK, then import for Web Crypto.
-// Public key is 65 bytes: 0x04 || X(32) || Y(32).
-// Private key is 32 bytes: d.
 function base64urlToBytes(b64url: string): Uint8Array {
   const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
   const pad = (4 - (b64.length % 4)) % 4;
@@ -39,8 +36,8 @@ function bytesToBase64url(bytes: Uint8Array): string {
 }
 
 async function buildAppServer(): Promise<webpush.ApplicationServer> {
-  const pub = base64urlToBytes(VAPID_PUBLIC);   // 65B: 0x04 || X(32) || Y(32)
-  const priv = base64urlToBytes(VAPID_PRIVATE); // 32B: d
+  const pub = base64urlToBytes(VAPID_PUBLIC);
+  const priv = base64urlToBytes(VAPID_PRIVATE);
   const x = bytesToBase64url(pub.slice(1, 33));
   const y = bytesToBase64url(pub.slice(33, 65));
   const d = bytesToBase64url(priv);
@@ -60,6 +57,7 @@ async function buildAppServer(): Promise<webpush.ApplicationServer> {
 interface ReminderRow {
   id: string;
   event_id: string;
+  user_id: string;
   fire_at: string;
   kind: "day-of" | "early";
   days_before: number | null;
@@ -73,6 +71,12 @@ interface Subscription {
   endpoint: string;
   p256dh: string;
   auth: string;
+}
+
+interface UserSettings {
+  user_id: string;
+  user_name: string;
+  butler_name: string;
 }
 
 function buildMessage(
@@ -109,25 +113,31 @@ async function sendDue(): Promise<SendResult> {
 
   const { data: due, error } = await supabase
     .from("reminders")
-    .select("id, event_id, fire_at, kind, days_before, title, time, location, color")
+    .select("id, event_id, user_id, fire_at, kind, days_before, title, time, location, color")
     .eq("sent", false)
     .eq("completed", false)
     .lte("fire_at", nowIso);
   if (error) throw error;
   if (!due || due.length === 0) return { count: 0, delivered: 0, failed: 0 };
 
-  const { data: settings } = await supabase
-    .from("settings")
-    .select("user_name, butler_name")
-    .eq("id", true)
-    .single();
-  const userName = settings?.user_name ?? "friend";
-  const butlerName = settings?.butler_name ?? "Alfred";
+  // Group reminders by user_id for per-user push.
+  const byUser = new Map<string, ReminderRow[]>();
+  for (const r of due as ReminderRow[]) {
+    const list = byUser.get(r.user_id) ?? [];
+    list.push(r);
+    byUser.set(r.user_id, list);
+  }
 
-  const { data: subs } = await supabase
-    .from("subscriptions")
-    .select("endpoint, p256dh, auth");
-  const subscriptions = (subs ?? []) as Subscription[];
+  // Batch-fetch settings for all relevant users.
+  const userIds = [...byUser.keys()];
+  const { data: settingsRows } = await supabase
+    .from("settings")
+    .select("user_id, user_name, butler_name")
+    .in("user_id", userIds);
+  const settingsByUser = new Map<string, UserSettings>();
+  for (const s of (settingsRows ?? []) as UserSettings[]) {
+    settingsByUser.set(s.user_id, s);
+  }
 
   const appServer = await buildAppServer();
   const staleEndpoints = new Set<string>();
@@ -135,40 +145,51 @@ async function sendDue(): Promise<SendResult> {
   let totalFailed = 0;
   let lastError: string | undefined;
 
-  for (const reminder of due as ReminderRow[]) {
-    const message = buildMessage(reminder, userName, butlerName);
-    const payload = JSON.stringify({ ...message, color: reminder.color });
+  for (const [userId, userReminders] of byUser) {
+    const settings = settingsByUser.get(userId);
+    const userName = settings?.user_name ?? "friend";
+    const butlerName = settings?.butler_name ?? "Alfred";
 
-    const results = await Promise.all(
-      subscriptions.map(async (sub) => {
-        try {
-          const subscriber = appServer.subscribe({
-            endpoint: sub.endpoint,
-            keys: { p256dh: sub.p256dh, auth: sub.auth },
-          });
-          await subscriber.pushTextMessage(payload, {});
-          return true;
-        } catch (err) {
-          const status = (err as { response?: { status?: number } })?.response?.status;
-          if (status === 404 || status === 410) staleEndpoints.add(sub.endpoint);
-          lastError = status ? `push ${status}` : String(err);
-          return false;
-        }
-      })
-    );
+    // Fetch this user's push subscriptions.
+    const { data: subs } = await supabase
+      .from("subscriptions")
+      .select("endpoint, p256dh, auth")
+      .eq("user_id", userId);
+    const subscriptions = (subs ?? []) as Subscription[];
 
-    const succeeded = results.filter(Boolean).length;
-    totalDelivered += succeeded;
-    totalFailed += results.length - succeeded;
+    for (const reminder of userReminders) {
+      const message = buildMessage(reminder, userName, butlerName);
+      const payload = JSON.stringify({ ...message, color: reminder.color });
 
-    // INV-4: mark sent only after at least one successful delivery, so an
-    // undelivered reminder (no subscribers / transient failure) is retried
-    // by the next cron tick instead of being silently lost (RD-1).
-    if (results.some(Boolean)) {
-      await supabase
-        .from("reminders")
-        .update({ sent: true })
-        .eq("id", reminder.id);
+      const results = await Promise.all(
+        subscriptions.map(async (sub) => {
+          try {
+            const subscriber = appServer.subscribe({
+              endpoint: sub.endpoint,
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
+            });
+            await subscriber.pushTextMessage(payload, {});
+            return true;
+          } catch (err) {
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            if (status === 404 || status === 410) staleEndpoints.add(sub.endpoint);
+            lastError = status ? `push ${status}` : String(err);
+            return false;
+          }
+        })
+      );
+
+      const succeeded = results.filter(Boolean).length;
+      totalDelivered += succeeded;
+      totalFailed += results.length - succeeded;
+
+      // INV-4: mark sent only after at least one successful delivery.
+      if (results.some(Boolean)) {
+        await supabase
+          .from("reminders")
+          .update({ sent: true })
+          .eq("id", reminder.id);
+      }
     }
   }
 
@@ -216,16 +237,8 @@ function wallTimeToUtcIso(
 }
 
 // Re-expand open-ended recurring events so their reminders reach end of next year (INV-8).
+// Uses each event owner's settings.timezone to preserve INV-1/INV-2.
 async function backfill(): Promise<number> {
-  // INV-1/INV-2: use the persisted user timezone so backfilled fire_at values
-  // match those written at creation time (correct offset + dedupe works).
-  const { data: settings } = await supabase
-    .from("settings")
-    .select("timezone")
-    .eq("id", true)
-    .single();
-  const tz = settings?.timezone ?? "UTC";
-
   const { data: events, error } = await supabase
     .from("events")
     .select("*")
@@ -234,10 +247,23 @@ async function backfill(): Promise<number> {
   if (error) throw error;
   if (!events || events.length === 0) return 0;
 
+  // Batch-fetch timezone for each distinct owner.
+  const ownerIds = [...new Set(events.map((ev) => ev.user_id))];
+  const { data: settingsRows } = await supabase
+    .from("settings")
+    .select("user_id, timezone")
+    .in("user_id", ownerIds);
+  const tzByUser = new Map<string, string>();
+  for (const s of (settingsRows ?? []) as { user_id: string; timezone: string }[]) {
+    tzByUser.set(s.user_id, s.timezone ?? "UTC");
+  }
+
   const limit = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 11, 31, 23, 59, 59));
   let added = 0;
 
   for (const ev of events) {
+    const tz = tzByUser.get(ev.user_id) ?? "UTC";
+
     const [y, mo, d] = ev.date.split("-").map(Number);
     const dtstart = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0));
     const rule = rrulestr(ev.rrule, { dtstart });
@@ -267,6 +293,7 @@ async function backfill(): Promise<number> {
       if (existingTimes.has(fireAt)) continue;
       newRows.push({
         event_id: ev.id,
+        user_id: ev.user_id,
         fire_at: fireAt,
         kind: "day-of",
         days_before: null,
