@@ -11,7 +11,9 @@ import type {
 
 export const runtime = "nodejs";
 
-const UPCOMING_LIMIT = 5;
+// Fetch more rows than we display because grouping can collapse early+day-of
+// pairs; 12 rows at most → displays up to 5 merged cards (DISPLAY_LIMIT in page.tsx).
+const UPCOMING_LIMIT = 12;
 
 export async function GET() {
   const supabase = getServerClient();

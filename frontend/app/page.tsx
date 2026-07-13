@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DBEvent,
   DetailEvent,
@@ -12,6 +12,7 @@ import {
   Settings,
   UpcomingReminder,
 } from "@/lib/types";
+import { groupUpcoming } from "@/lib/upcoming";
 import {
   getLocalTimezone,
   todayLocalString,
@@ -51,7 +52,7 @@ interface Draft {
 }
 
 interface Toast {
-  reminderId: string;
+  reminderIds: string[];
 }
 
 function toDraft(event: EventInput): Draft {
@@ -229,19 +230,19 @@ export default function Home() {
     await patchComplete(reminderId, true);
     // Show undo toast for ~5 s.
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({ reminderId });
+    setToast({ reminderIds: [reminderId] });
     toastTimerRef.current = setTimeout(() => setToast(null), 5000);
   }, [patchComplete]);
 
   const undoComplete = useCallback(async () => {
     if (!toast) return;
-    const id = toast.reminderId;
+    const ids = toast.reminderIds;
     setToast(null);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    await patchComplete(id, false);
+    await Promise.all(ids.map((id) => patchComplete(id, false)));
   }, [toast, patchComplete]);
 
-  // onComplete handler for both DetailModal and UpcomingList.
+  // onComplete handler for DetailModal (single reminder).
   const handleComplete = useCallback((reminderId: string, completed: boolean) => {
     if (completed) {
       completeReminder(reminderId);
@@ -249,6 +250,14 @@ export default function Home() {
       patchComplete(reminderId, false);
     }
   }, [completeReminder, patchComplete]);
+
+  // onComplete handler for UpcomingList (cascades over all ids in a group).
+  const handleCompleteGroup = useCallback(async (ids: string[]) => {
+    await Promise.all(ids.map((id) => patchComplete(id, true)));
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ reminderIds: ids });
+    toastTimerRef.current = setTimeout(() => setToast(null), 5000);
+  }, [patchComplete]);
 
   // ── Detail modal helpers ─────────────────────────────────────────────────────
   const openDetailByDate = (date: string) => {
@@ -307,6 +316,13 @@ export default function Home() {
   const userSuffix = settings?.user_name?.trim()
     ? `, ${settings.user_name.trim()}`
     : "";
+
+  // Collapse same-occurrence early + day-of rows into one card (max 5 shown).
+  const DISPLAY_LIMIT = 5;
+  const groupedUpcoming = useMemo(
+    () => groupUpcoming(data?.upcoming ?? []).slice(0, DISPLAY_LIMIT),
+    [data]
+  );
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
@@ -436,9 +452,9 @@ export default function Home() {
       <section>
         <h2 className="mb-3 text-sm font-medium text-gray-700">Coming up</h2>
         <UpcomingList
-          upcoming={data?.upcoming ?? []}
+          upcoming={groupedUpcoming}
           onSelect={openDetailByReminder}
-          onComplete={(id) => handleComplete(id, true)}
+          onComplete={handleCompleteGroup}
         />
       </section>
 

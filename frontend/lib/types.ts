@@ -48,6 +48,22 @@ export interface UpcomingReminder {
   completed: boolean;
 }
 
+// One card in the Coming up list — may represent multiple DB reminders for the
+// same occurrence (e.g. an early + a day-of row for the same event at the same
+// local date/time).  All ids are completed together so neither row lingers.
+export interface UpcomingGroup {
+  /** `${event_id}|${localFireDate}|${time ?? ""}` */
+  key: string;
+  /** day-of row when present, otherwise the early row. Used for display + detail modal. */
+  representative: UpcomingReminder;
+  /** every reminder id in the group — PATCHed together on complete / undo */
+  ids: string[];
+  /** true if any member has kind === "early" → renders "· early reminder" label */
+  hasEarly: boolean;
+  /** min(fire_at) across the group — already the natural sort order */
+  sortFireAt: string;
+}
+
 // DBEvent enriched with the specific reminder occurrence for DetailModal display.
 export interface DetailEvent extends DBEvent {
   reminderId: string | null;      // null only if no day-of reminder found for this date
