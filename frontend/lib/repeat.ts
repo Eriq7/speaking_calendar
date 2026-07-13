@@ -5,17 +5,21 @@ export type RepeatKind =
   | "daily"
   | "weekly"
   | "monthly"
-  | "custom"
-  | "advanced";
+  | "custom"    // every N [unit]
+  | "advanced"; // arbitrary rrule, preserved verbatim
+
+export type RepeatFreq = "MINUTELY" | "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY";
 
 export interface RepeatValue {
   kind: RepeatKind;
-  intervalDays: number; // only meaningful when kind === "custom"
-  raw?: string; // original rrule, preserved verbatim when kind === "advanced"
+  intervalN: number;        // meaningful when kind === "custom"
+  intervalUnit: RepeatFreq; // meaningful when kind === "custom"
+  raw?: string;             // original rrule, preserved verbatim when kind === "advanced"
 }
 
 export function rruleToRepeat(rrule: string | null): RepeatValue {
-  if (!rrule) return { kind: "none", intervalDays: 2 };
+  if (!rrule) return { kind: "none", intervalN: 1, intervalUnit: "DAILY" };
+
   const parts = Object.fromEntries(
     rrule
       .split(";")
@@ -23,26 +27,21 @@ export function rruleToRepeat(rrule: string | null): RepeatValue {
       .filter((kv) => kv.length === 2)
       .map(([k, v]) => [k.toUpperCase(), v.toUpperCase()])
   );
-  const freq = parts.FREQ;
+  const freq = parts.FREQ as RepeatFreq | undefined;
   const interval = parts.INTERVAL ? parseInt(parts.INTERVAL, 10) : 1;
-  // Any parameter beyond FREQ/INTERVAL (BYDAY, BYMONTHDAY, UNTIL, COUNT, …)
-  // cannot be round-tripped through the simple dropdown; preserve it verbatim.
   const hasExtraParams = Object.keys(parts).some(
     (k) => k !== "FREQ" && k !== "INTERVAL"
   );
 
-  if (freq === "DAILY" && !hasExtraParams) {
-    return interval > 1
-      ? { kind: "custom", intervalDays: interval }
-      : { kind: "daily", intervalDays: 2 };
+  if (!hasExtraParams && freq) {
+    if (freq === "DAILY" && interval === 1) return { kind: "daily", intervalN: 1, intervalUnit: "DAILY" };
+    if (freq === "WEEKLY" && interval === 1) return { kind: "weekly", intervalN: 1, intervalUnit: "WEEKLY" };
+    if (freq === "MONTHLY" && interval === 1) return { kind: "monthly", intervalN: 1, intervalUnit: "MONTHLY" };
+    // Any freq with interval > 1, or MINUTELY/HOURLY → "custom"
+    return { kind: "custom", intervalN: interval, intervalUnit: freq };
   }
-  if (freq === "WEEKLY" && interval === 1 && !hasExtraParams) {
-    return { kind: "weekly", intervalDays: 2 };
-  }
-  if (freq === "MONTHLY" && interval === 1 && !hasExtraParams) {
-    return { kind: "monthly", intervalDays: 2 };
-  }
-  return { kind: "advanced", intervalDays: interval > 1 ? interval : 2, raw: rrule };
+
+  return { kind: "advanced", intervalN: interval > 1 ? interval : 1, intervalUnit: freq ?? "DAILY", raw: rrule };
 }
 
 export function repeatToRrule(value: RepeatValue): string | null {
@@ -56,28 +55,33 @@ export function repeatToRrule(value: RepeatValue): string | null {
     case "monthly":
       return "FREQ=MONTHLY";
     case "custom": {
-      const n = Math.max(1, Math.floor(value.intervalDays || 1));
-      return `FREQ=DAILY;INTERVAL=${n}`;
+      const n = Math.max(1, Math.floor(value.intervalN || 1));
+      return `FREQ=${value.intervalUnit};INTERVAL=${n}`;
     }
     case "advanced":
       return value.raw ?? null;
   }
 }
 
+const UNIT_LABEL: Record<RepeatFreq, [string, string]> = {
+  MINUTELY: ["minute", "minutes"],
+  HOURLY:   ["hour",   "hours"],
+  DAILY:    ["day",    "days"],
+  WEEKLY:   ["week",   "weeks"],
+  MONTHLY:  ["month",  "months"],
+};
+
 export function repeatLabel(rrule: string | null): string {
   const v = rruleToRepeat(rrule);
   switch (v.kind) {
-    case "none":
-      return "Does not repeat";
-    case "daily":
-      return "Daily";
-    case "weekly":
-      return "Weekly";
-    case "monthly":
-      return "Monthly";
-    case "custom":
-      return `Every ${v.intervalDays} days`;
-    case "advanced":
-      return "Custom schedule";
+    case "none":    return "Does not repeat";
+    case "daily":   return "Daily";
+    case "weekly":  return "Weekly";
+    case "monthly": return "Monthly";
+    case "custom": {
+      const [singular, plural] = UNIT_LABEL[v.intervalUnit];
+      return `Every ${v.intervalN} ${v.intervalN === 1 ? singular : plural}`;
+    }
+    case "advanced": return "Custom schedule";
   }
 }

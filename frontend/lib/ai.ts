@@ -26,9 +26,16 @@ const eventJsonSchema = {
             description: "24h HH:MM, or null for an all-day event",
           },
           location: { type: ["string", "null"] },
-          early_reminder: {
+          early_value: {
             type: ["integer", "null"],
-            description: "Remind this many days early, or null",
+            description:
+              "How many early_unit before the event to send an advance reminder, or null. E.g. '提前3小时' → 3",
+          },
+          early_unit: {
+            type: ["string", "null"],
+            enum: ["minute", "hour", "day", "week", "month", null],
+            description:
+              "Unit for early_value: minute/hour/day/week/month. E.g. '提前3小时' → \"hour\"",
           },
           rrule: {
             type: ["string", "null"],
@@ -50,7 +57,8 @@ const eventJsonSchema = {
           "date",
           "time",
           "location",
-          "early_reminder",
+          "early_value",
+          "early_unit",
           "rrule",
           "repeat_end_date",
           "color",
@@ -63,16 +71,51 @@ const eventJsonSchema = {
   additionalProperties: false,
 } as const;
 
+const DAY_NAMES_EN = [
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+];
+const DAY_NAMES_CN = ["日", "一", "二", "三", "四", "五", "六"];
+
+function buildDateAnchors(today: string): string {
+  const [y, m, d] = today.split("-").map(Number);
+  const todayDate = new Date(Date.UTC(y, m - 1, d));
+  const dow = todayDate.getUTCDay(); // 0=Sun … 6=Sat
+  const todayName = DAY_NAMES_EN[dow];
+
+  // Monday of this ISO week (week starts Monday).
+  const daysFromMon = dow === 0 ? 6 : dow - 1;
+  const thisMon = new Date(Date.UTC(y, m - 1, d - daysFromMon));
+  const nextMon = new Date(thisMon.getTime() + 7 * 24 * 3600 * 1000);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = (dt: Date) =>
+    `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+
+  const anchors = DAY_NAMES_EN.map((name, i) => {
+    const dt = new Date(nextMon.getTime() + i * 24 * 3600 * 1000);
+    return `  下周${DAY_NAMES_CN[i]}/Next ${name}: ${fmt(dt)}`;
+  });
+
+  return [
+    `Today is ${today} (${todayName}).`,
+    `Next-week (下周) anchors — copy these exact dates, do NOT compute "+7 days":`,
+    ...anchors,
+  ].join("\n");
+}
+
 function systemPrompt(today: string, timezone: string): string {
+  const dateSection = buildDateAnchors(today);
   return [
     "You extract calendar events from natural language.",
-    `Today is ${today} in timezone ${timezone}.`,
-    "Resolve all relative dates (tomorrow, next Monday, in 3 days) against today.",
-    "Return every distinct event you find. If none, return an empty events array.",
-    "Use a 24h HH:MM time; set time to null for all-day events.",
+    dateSection,
+    `User timezone: ${timezone}.`,
+    'Resolve relative dates using the anchors above. "下周X" = next calendar week\'s weekday X (use the table, not +7 days).',
+    "Return every distinct event. If none, return an empty events array.",
+    "Use 24h HH:MM time; null for all-day events.",
+    "For advance reminders use early_value + early_unit: '提前3小时' → early_value:3, early_unit:\"hour\"; '提前2天' → early_value:2, early_unit:\"day\".",
     "Only set rrule for genuinely recurring events, using iCalendar RRULE syntax.",
     "Pick a pleasant, distinct hex color per event.",
-  ].join(" ");
+  ].join("\n");
 }
 
 // Vendor-decoupled entry point. Swap the body to change providers.

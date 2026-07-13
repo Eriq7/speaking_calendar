@@ -1,8 +1,9 @@
 "use client";
 
-import { EventInput } from "@/lib/types";
+import { EventInput, EarlyUnit } from "@/lib/types";
 import {
   RepeatKind,
+  RepeatFreq,
   rruleToRepeat,
   repeatToRrule,
 } from "@/lib/repeat";
@@ -18,6 +19,22 @@ const inputClass =
   "w-full rounded-md border border-border px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none";
 const labelClass = "mb-1 block text-xs font-medium text-gray-500";
 
+const EARLY_UNITS: { value: EarlyUnit; label: string }[] = [
+  { value: "minute", label: "minutes" },
+  { value: "hour",   label: "hours" },
+  { value: "day",    label: "days" },
+  { value: "week",   label: "weeks" },
+  { value: "month",  label: "months" },
+];
+
+const REPEAT_FREQ_OPTIONS: { value: RepeatFreq; label: string }[] = [
+  { value: "MINUTELY", label: "minutes" },
+  { value: "HOURLY",   label: "hours" },
+  { value: "DAILY",    label: "days" },
+  { value: "WEEKLY",   label: "weeks" },
+  { value: "MONTHLY",  label: "months" },
+];
+
 export default function EventPreviewCard({
   event,
   onUpdate,
@@ -29,9 +46,8 @@ export default function EventPreviewCard({
   const repeat = rruleToRepeat(event.rrule);
 
   const onRepeatKind = (kind: RepeatKind) => {
-    // Keep the original schedule (BYDAY/INTERVAL/etc.) untouched.
     if (kind === "advanced") return;
-    const next = repeatToRrule({ kind, intervalDays: repeat.intervalDays });
+    const next = repeatToRrule({ kind, intervalN: repeat.intervalN, intervalUnit: repeat.intervalUnit });
     onUpdate({
       ...event,
       rrule: next,
@@ -39,8 +55,8 @@ export default function EventPreviewCard({
     });
   };
 
-  const onCustomInterval = (days: number) =>
-    set("rrule", repeatToRrule({ kind: "custom", intervalDays: days }));
+  const onCustomRepeat = (n: number, unit: RepeatFreq) =>
+    set("rrule", repeatToRrule({ kind: "custom", intervalN: n, intervalUnit: unit }));
 
   return (
     <div
@@ -108,22 +124,39 @@ export default function EventPreviewCard({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3">
+        {/* Early reminder: value + unit */}
         <div>
-          <label className={labelClass}>Remind me early (days)</label>
-          <input
-            type="number"
-            min={0}
-            value={event.early_reminder ?? ""}
-            onChange={(e) =>
-              set(
-                "early_reminder",
-                e.target.value === "" ? null : Math.max(0, Number(e.target.value))
-              )
-            }
-            placeholder="None"
-            className={inputClass}
-          />
+          <label className={labelClass}>Remind early</label>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min={0}
+              value={event.early_value ?? ""}
+              onChange={(e) => {
+                const val = e.target.value === "" ? null : Math.max(0, Number(e.target.value));
+                onUpdate({
+                  ...event,
+                  early_value: val,
+                  early_unit: val == null ? null : (event.early_unit ?? "hour"),
+                });
+              }}
+              placeholder="None"
+              className="w-20 rounded-md border border-border px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none"
+            />
+            <select
+              value={event.early_unit ?? "hour"}
+              onChange={(e) => set("early_unit", (e.target.value as EarlyUnit) || null)}
+              disabled={event.early_value == null}
+              className="flex-1 rounded-md border border-border px-2 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none disabled:opacity-40"
+            >
+              {EARLY_UNITS.map((u) => (
+                <option key={u.value} value={u.value}>{u.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {/* Repeat */}
         <div>
           <label className={labelClass}>Repeat</label>
           <select
@@ -135,7 +168,7 @@ export default function EventPreviewCard({
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
-            <option value="custom">Custom (every N days)</option>
+            <option value="custom">Every N [unit]</option>
             {repeat.kind === "advanced" && (
               <option value="advanced">Custom schedule (keeps original)</option>
             )}
@@ -143,16 +176,31 @@ export default function EventPreviewCard({
         </div>
       </div>
 
+      {/* Every N [unit] controls */}
       {repeat.kind === "custom" && (
-        <div className="mt-3">
-          <label className={labelClass}>Every N days</label>
-          <input
-            type="number"
-            min={1}
-            value={repeat.intervalDays}
-            onChange={(e) => onCustomInterval(Math.max(1, Number(e.target.value)))}
-            className={inputClass}
-          />
+        <div className="mt-3 flex gap-2">
+          <div className="flex-1">
+            <label className={labelClass}>Every N</label>
+            <input
+              type="number"
+              min={1}
+              value={repeat.intervalN}
+              onChange={(e) => onCustomRepeat(Math.max(1, Number(e.target.value)), repeat.intervalUnit)}
+              className={inputClass}
+            />
+          </div>
+          <div className="flex-1">
+            <label className={labelClass}>Unit</label>
+            <select
+              value={repeat.intervalUnit}
+              onChange={(e) => onCustomRepeat(repeat.intervalN, e.target.value as RepeatFreq)}
+              className={inputClass}
+            >
+              {REPEAT_FREQ_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 

@@ -1,10 +1,13 @@
+export type EarlyUnit = "minute" | "hour" | "day" | "week" | "month";
+
 export interface EventInput {
   title: string;
   note: string | null;
   date: string;
   time: string | null;
   location: string | null;
-  early_reminder: number | null;
+  early_value: number | null;
+  early_unit: EarlyUnit | null;
   rrule: string | null;
   repeat_end_date: string | null;
   color: string;
@@ -22,7 +25,9 @@ export interface DBReminder {
   event_id: string;
   fire_at: string;
   kind: ReminderKind;
-  days_before: number | null;
+  days_before: number | null;  // legacy; prefer early_value/early_unit
+  early_value: number | null;
+  early_unit: string | null;
   sent: boolean;
   completed: boolean; // user-acknowledged; independent of sent (push delivery)
   title: string;

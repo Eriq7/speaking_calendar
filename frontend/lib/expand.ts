@@ -1,5 +1,5 @@
 import { rrulestr } from "rrule";
-import type { EventInput, DBReminder } from "./types";
+import type { EventInput, DBReminder, EarlyUnit } from "./types";
 
 // "completed" is omitted because the DB column defaults to false on insert.
 export type NewReminder = Omit<DBReminder, "id" | "event_id" | "sent" | "completed">;
@@ -14,9 +14,10 @@ export function isValidTimezone(tz: string): boolean {
   }
 }
 
-// Time-of-day (local) used when an event has no explicit time.
-const DEFAULT_HOUR = 9;
-const DEFAULT_MINUTE = 0;
+// Cap rows per event to prevent DB explosion from high-frequency rules.
+const MAX_ROWS_PER_EVENT = 500;
+// Horizon for minutely/hourly rules: 30 days from now (weekly backfill rolls forward).
+const HIGH_FREQ_HORIZON_MS = 30 * 24 * 3600 * 1000;
 
 // Offset (tz - UTC) in ms for the given instant and IANA timezone.
 function tzOffsetMs(instant: Date, timeZone: string): number {
@@ -58,7 +59,7 @@ function wallTimeToUtc(
 }
 
 function parseTime(time: string | null): { hour: number; minute: number } {
-  if (!time) return { hour: DEFAULT_HOUR, minute: DEFAULT_MINUTE };
+  if (!time) return { hour: 9, minute: 0 };
   const [h, m] = time.split(":").map(Number);
   return { hour: h, minute: m };
 }
@@ -67,6 +68,12 @@ function parseTime(time: string | null): { hour: number; minute: number } {
 function openEndedLimit(): Date {
   const nextYear = new Date().getUTCFullYear() + 1;
   return new Date(Date.UTC(nextYear, 11, 31, 23, 59, 59));
+}
+
+// Extract FREQ value from an rrule string.
+function rruleFreq(rrule: string): string {
+  const match = rrule.toUpperCase().match(/FREQ=([A-Z]+)/);
+  return match ? match[1] : "";
 }
 
 // Local calendar dates on which the event occurs.
@@ -78,15 +85,67 @@ function occurrenceDates(event: EventInput): Date[] {
 
   if (!event.rrule) return [dtstart];
 
-  const until = event.repeat_end_date
+  const baseUntil = event.repeat_end_date
     ? (() => {
         const [ey, em, ed] = event.repeat_end_date!.split("-").map(Number);
         return new Date(Date.UTC(ey, em - 1, ed, 23, 59, 59));
       })()
     : openEndedLimit();
 
+  // Cap horizon for high-frequency rules to prevent DB explosion.
+  const freq = rruleFreq(event.rrule);
+  let until = baseUntil;
+  if (freq === "MINUTELY" || freq === "HOURLY") {
+    const shortHorizon = new Date(Date.now() + HIGH_FREQ_HORIZON_MS);
+    if (shortHorizon < until) until = shortHorizon;
+  }
+
   const rule = rrulestr(event.rrule, { dtstart });
-  return rule.between(dtstart, until, true);
+  const all = rule.between(dtstart, until, true);
+  return all.slice(0, MAX_ROWS_PER_EVENT);
+}
+
+// Compute UTC fire_at for an early reminder: event time minus the given offset.
+function earlyFireAt(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  earlyValue: number,
+  earlyUnit: EarlyUnit,
+  timezone: string
+): Date {
+  const eventTime = wallTimeToUtc(year, month, day, hour, minute, timezone);
+
+  switch (earlyUnit) {
+    case "minute":
+      return new Date(eventTime.getTime() - earlyValue * 60 * 1000);
+    case "hour":
+      return new Date(eventTime.getTime() - earlyValue * 3600 * 1000);
+    case "day": {
+      const shifted = new Date(Date.UTC(year, month - 1, day - earlyValue));
+      return wallTimeToUtc(
+        shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(),
+        hour, minute, timezone
+      );
+    }
+    case "week": {
+      const shifted = new Date(Date.UTC(year, month - 1, day - earlyValue * 7));
+      return wallTimeToUtc(
+        shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(),
+        hour, minute, timezone
+      );
+    }
+    case "month": {
+      let m = month - earlyValue;
+      let y = year;
+      while (m < 1) { m += 12; y--; }
+      // Clamp day to last day of target month.
+      const maxDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return wallTimeToUtc(y, m, Math.min(day, maxDay), hour, minute, timezone);
+    }
+  }
 }
 
 // Expand an event into its reminders with UTC fire_at timestamps.
@@ -108,26 +167,28 @@ export function expandReminders(
       fire_at: dayOf.toISOString(),
       kind: "day-of",
       days_before: null,
+      early_value: null,
+      early_unit: null,
       title: event.title,
       time: event.time,
       location: event.location,
       color: event.color,
     });
 
-    // INV-3: early reminder N days before, at the default local hour.
-    if (event.early_reminder && event.early_reminder > 0) {
-      const early = wallTimeToUtc(
-        year,
-        month,
-        day - event.early_reminder,
-        DEFAULT_HOUR,
-        DEFAULT_MINUTE,
+    // Early reminder: fire_at = event time − offset (any unit).
+    if (event.early_value != null && event.early_value > 0 && event.early_unit) {
+      const early = earlyFireAt(
+        year, month, day, hour, minute,
+        event.early_value, event.early_unit,
         timezone
       );
       reminders.push({
         fire_at: early.toISOString(),
         kind: "early",
-        days_before: event.early_reminder,
+        // Populate legacy days_before for unit=day so old push code still works.
+        days_before: event.early_unit === "day" ? event.early_value : null,
+        early_value: event.early_value,
+        early_unit: event.early_unit,
         title: event.title,
         time: event.time,
         location: event.location,

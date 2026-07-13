@@ -79,9 +79,9 @@ export default function DetailModal({
                   {ev.location && <Row label="Where">{ev.location}</Row>}
                   {ev.note && <Row label="Note">{ev.note}</Row>}
                   <Row label="Repeat">{repeatLabel(ev.rrule)}</Row>
-                  {ev.early_reminder != null && (
+                  {ev.early_value != null && ev.early_unit && (
                     <Row label="Early reminder">
-                      {ev.early_reminder} day(s) before
+                      {ev.early_value} {ev.early_unit}(s) before
                     </Row>
                   )}
                 </dl>

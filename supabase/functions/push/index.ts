@@ -60,7 +60,9 @@ interface ReminderRow {
   user_id: string;
   fire_at: string;
   kind: "day-of" | "early";
-  days_before: number | null;
+  days_before: number | null;  // legacy; prefer early_value/early_unit
+  early_value: number | null;
+  early_unit: string | null;
   title: string;
   time: string | null;
   location: string | null;
@@ -79,6 +81,28 @@ interface UserSettings {
   butler_name: string;
 }
 
+function formatEarlyOffset(
+  value: number | null,
+  unit: string | null,
+  daysBeforeFallback: number | null
+): string {
+  if (value != null && unit) {
+    const labels: Record<string, [string, string]> = {
+      minute: ["minute", "minutes"],
+      hour:   ["hour",   "hours"],
+      day:    ["day",    "days"],
+      week:   ["week",   "weeks"],
+      month:  ["month",  "months"],
+    };
+    const [singular, plural] = labels[unit] ?? [unit, unit + "s"];
+    return `${value} ${value === 1 ? singular : plural}`;
+  }
+  if (daysBeforeFallback != null) {
+    return `${daysBeforeFallback} ${daysBeforeFallback === 1 ? "day" : "days"}`;
+  }
+  return "a while";
+}
+
 function buildMessage(
   reminder: ReminderRow,
   userName: string,
@@ -86,12 +110,10 @@ function buildMessage(
 ): { title: string; body: string } {
   const loc = reminder.location ? ` ${reminder.location}` : "";
   if (reminder.kind === "early") {
-    const eventDate = new Date(reminder.fire_at);
-    eventDate.setUTCDate(eventDate.getUTCDate() + (reminder.days_before ?? 0));
-    const dateStr = eventDate.toISOString().slice(0, 10);
+    const offset = formatEarlyOffset(reminder.early_value, reminder.early_unit, reminder.days_before);
     return {
       title: reminder.title,
-      body: `Hey ${userName}, it's ${butlerName}. In ${reminder.days_before} days (${dateStr}) — ${reminder.title}.`,
+      body: `Hey ${userName}, it's ${butlerName}. In ${offset} — ${reminder.title}.`,
     };
   }
   const whenTime = reminder.time ? ` ${reminder.time}` : "";
@@ -113,7 +135,7 @@ async function sendDue(): Promise<SendResult> {
 
   const { data: due, error } = await supabase
     .from("reminders")
-    .select("id, event_id, user_id, fire_at, kind, days_before, title, time, location, color")
+    .select("id, event_id, user_id, fire_at, kind, days_before, early_value, early_unit, title, time, location, color")
     .eq("sent", false)
     .eq("completed", false)
     .lte("fire_at", nowIso);
@@ -258,7 +280,9 @@ async function backfill(): Promise<number> {
     tzByUser.set(s.user_id, s.timezone ?? "UTC");
   }
 
-  const limit = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 11, 31, 23, 59, 59));
+  const endOfNextYear = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 11, 31, 23, 59, 59));
+  const MAX_ROWS = 500;
+  const HIGH_FREQ_HORIZON_MS = 30 * 24 * 3600 * 1000;
   let added = 0;
 
   for (const ev of events) {
@@ -267,7 +291,17 @@ async function backfill(): Promise<number> {
     const [y, mo, d] = ev.date.split("-").map(Number);
     const dtstart = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0));
     const rule = rrulestr(ev.rrule, { dtstart });
-    const occurrences = rule.between(dtstart, limit, true);
+
+    // Cap horizon for high-frequency rules to prevent row explosion.
+    const freqMatch = (ev.rrule as string).toUpperCase().match(/FREQ=([A-Z]+)/);
+    const freq = freqMatch ? freqMatch[1] : "";
+    let limit = endOfNextYear;
+    if (freq === "MINUTELY" || freq === "HOURLY") {
+      const shortHorizon = new Date(Date.now() + HIGH_FREQ_HORIZON_MS);
+      if (shortHorizon < limit) limit = shortHorizon;
+    }
+
+    const occurrences = rule.between(dtstart, limit, true).slice(0, MAX_ROWS);
 
     const { data: existing } = await supabase
       .from("reminders")
