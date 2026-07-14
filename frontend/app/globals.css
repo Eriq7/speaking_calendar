@@ -2,9 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Single light theme — warm off-white background, calm blue accent (Q1/Q2). */
+/* Single light theme — grey-white background, purple accent. */
 :root {
-  --background: #FAFAF7;
+  --background: #F6F5FA;
   --foreground: #1C1C1E;
 }
 

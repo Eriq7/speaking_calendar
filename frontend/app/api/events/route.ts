@@ -11,9 +11,8 @@ import type {
 
 export const runtime = "nodejs";
 
-// Fetch more rows than we display because grouping can collapse early+day-of
-// pairs; 12 rows at most → displays up to 5 merged cards (DISPLAY_LIMIT in page.tsx).
-const UPCOMING_LIMIT = 12;
+// Safety cap — expansion is already bounded by end-of-next-year horizon + ≤500 rows/event.
+const UPCOMING_MAX = 500;
 
 export async function GET() {
   const supabase = getServerClient();
@@ -44,7 +43,7 @@ export async function GET() {
       .eq("completed", false)
       .gt("fire_at", nowIso)
       .order("fire_at", { ascending: true })
-      .limit(UPCOMING_LIMIT),
+      .limit(UPCOMING_MAX),
   ]);
 
   const error = eventsRes.error || remindersRes.error || upcomingRes.error;

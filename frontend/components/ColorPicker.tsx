@@ -95,7 +95,7 @@ export default function ColorPicker({ value, onChange }: ColorPickerProps) {
                 <button
                   type="button"
                   onClick={handleBackToPresets}
-                  className="w-full rounded-md px-2 py-1.5 text-left text-sm text-accent hover:bg-blue-50"
+                  className="w-full rounded-md px-2 py-1.5 text-left text-sm text-accent hover:bg-accent-soft"
                 >
                   ← Back to presets
                 </button>

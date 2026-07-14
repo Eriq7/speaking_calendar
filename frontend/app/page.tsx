@@ -317,10 +317,8 @@ export default function Home() {
     ? `, ${settings.user_name.trim()}`
     : "";
 
-  // Collapse same-occurrence early + day-of rows into one card (max 5 shown).
-  const DISPLAY_LIMIT = 5;
   const groupedUpcoming = useMemo(
-    () => groupUpcoming(data?.upcoming ?? []).slice(0, DISPLAY_LIMIT),
+    () => groupUpcoming(data?.upcoming ?? []),
     [data]
   );
 
@@ -328,7 +326,7 @@ export default function Home() {
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
       {/* Notification banner */}
       {showNotifBanner && (
-        <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${isIOSChrome() ? "border-amber-200 bg-amber-50" : "border-blue-200 bg-blue-50"}`}>
+        <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${isIOSChrome() ? "border-amber-200 bg-amber-50" : "border-accent/30 bg-accent-soft"}`}>
           {isIOSChrome() ? (
             <div className="flex items-start gap-3">
               <span className="flex-1 text-amber-800">
@@ -338,14 +336,14 @@ export default function Home() {
             </div>
           ) : isIOS() && !isStandalone() ? (
             <div className="flex items-start gap-3">
-              <span className="flex-1 text-blue-800">
+              <span className="flex-1 text-gray-700">
                 📲 To get reminders on iPhone: tap <strong>⎙ Share → Add to Home Screen</strong>, then open the app from your Home Screen.
               </span>
-              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-blue-400 hover:text-blue-600">✕</button>
+              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-gray-400 hover:text-gray-600">✕</button>
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <span className="flex-1 text-blue-800">
+              <span className="flex-1 text-gray-700">
                 🔔 Enable notifications so I can remind you on time.
               </span>
               <button
@@ -355,7 +353,7 @@ export default function Home() {
               >
                 Enable
               </button>
-              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-blue-400 hover:text-blue-600">✕</button>
+              <button type="button" onClick={() => setBannerDismissed(true)} aria-label="Dismiss" className="shrink-0 text-gray-400 hover:text-gray-600">✕</button>
             </div>
           )}
         </div>
@@ -384,7 +382,7 @@ export default function Home() {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="e.g. Dentist next Tuesday at 9am, remind me 1 day before"
+          placeholder="e.g. Yoga every Tuesday 9am at Downtown Studio, remind me 1 day before, until Aug 30"
           rows={3}
           className="w-full rounded-xl border border-border bg-surface p-3 text-sm text-gray-900 focus:border-accent focus:outline-none"
         />
@@ -482,7 +480,7 @@ export default function Home() {
           <button
             type="button"
             onClick={undoComplete}
-            className="font-semibold text-blue-300 hover:text-blue-200"
+            className="font-semibold text-[#C4B3F5] hover:text-[#D5C6F8]"
           >
             Undo
           </button>

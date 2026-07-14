@@ -151,7 +151,7 @@ export default function SettingsPanel({
               </ol>
             </div>
           ) : isIOS() && !isStandalone() ? (
-            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
+            <div className="rounded-lg bg-accent-soft border border-accent/30 px-3 py-2.5 text-xs text-gray-700 leading-relaxed">
               <p className="font-medium mb-1">📲 Add to Home Screen first</p>
               <p>To receive notifications on iPhone:</p>
               <ol className="mt-1.5 ml-3 list-decimal space-y-1">
@@ -178,7 +178,7 @@ export default function SettingsPanel({
               <button
                 type="button"
                 onClick={handleEnableNotifications}
-                className="rounded-md border border-accent px-3 py-1.5 text-sm text-accent hover:bg-blue-50"
+                className="rounded-md border border-accent px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"
               >
                 🔔 Enable notifications
               </button>

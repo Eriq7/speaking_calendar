@@ -11,12 +11,13 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
-        // Design-token colours (Q2: warm-white + calm-blue palette)
-        accent: "#2F6FED",       // buttons, today ring, links
-        "accent-hover": "#1A56D6",
-        surface: "#FFFFFF",      // cards, modals
-        border: "#E7E7E2",       // subtle warm-gray borders
-        "past-cell": "#E8E8E3",  // year-grid past-date cells
+        // Design-token colours (purple + grey-white palette)
+        accent: "#6D4DD6",        // buttons, today ring, links
+        "accent-hover": "#5E3FC0",
+        "accent-soft": "#EFEAFB", // light lavender tint for banners / soft hovers
+        surface: "#FFFFFF",       // cards, modals
+        border: "#E6E3F0",        // slightly lavender-grey borders
+        "past-cell": "#E8E8E3",   // year-grid past-date cells
       },
     },
   },
