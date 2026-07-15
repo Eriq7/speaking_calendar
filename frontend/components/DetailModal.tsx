@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { DBEvent, DetailEvent } from "@/lib/types";
 import { formatFriendlyDate, formatTime } from "@/lib/date";
 import { repeatLabel } from "@/lib/repeat";
@@ -10,6 +11,7 @@ interface DetailModalProps {
   onClose: () => void;
   onEdit: (event: DBEvent) => void;
   onDelete: (id: string) => void;
+  onDeleteOccurrence?: (id: string, date: string) => void;
   onComplete: (reminderId: string, completed: boolean) => void;
 }
 
@@ -19,8 +21,11 @@ export default function DetailModal({
   onClose,
   onEdit,
   onDelete,
+  onDeleteOccurrence,
   onComplete,
 }: DetailModalProps) {
+  const [deleteChoiceFor, setDeleteChoiceFor] = useState<string | null>(null);
+
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
@@ -52,7 +57,6 @@ export default function DetailModal({
                 className={`rounded-xl border border-border p-4 ${ev.reminderCompleted ? "opacity-60" : ""}`}
                 style={{ borderLeft: `4px solid ${ev.color}` }}
               >
-                {/* Overdue banner */}
                 {ev.isOverdue && (
                   <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-red-600">
                     <span aria-hidden>!</span>
@@ -87,7 +91,6 @@ export default function DetailModal({
                 </dl>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {/* Complete / Undo */}
                   {ev.reminderId && (
                     ev.reminderCompleted ? (
                       <button
@@ -115,13 +118,58 @@ export default function DetailModal({
                   >
                     Edit
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(ev.id)}
-                    className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
+
+                  {/* P5: repeating events get a two-choice delete; non-repeating is direct */}
+                  {ev.rrule && ev.occurrenceDate && onDeleteOccurrence ? (
+                    deleteChoiceFor === ev.id ? (
+                      <div className="flex w-full flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-xs font-medium text-gray-700">Delete…</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteOccurrence(ev.id, ev.occurrenceDate!);
+                            setDeleteChoiceFor(null);
+                          }}
+                          className="rounded-md border border-red-300 bg-white px-3 py-1 text-left text-sm text-red-700 hover:bg-red-50"
+                        >
+                          Only this occurrence
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDelete(ev.id);
+                            setDeleteChoiceFor(null);
+                          }}
+                          className="rounded-md border border-red-300 bg-white px-3 py-1 text-left text-sm text-red-700 hover:bg-red-50"
+                        >
+                          All occurrences (including future)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteChoiceFor(null)}
+                          className="text-left text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setDeleteChoiceFor(ev.id)}
+                        className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onDelete(ev.id)}
+                      className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

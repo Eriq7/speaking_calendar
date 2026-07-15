@@ -1,5 +1,7 @@
 // Maps between the repeat dropdown UI and iCalendar RRULE strings.
 
+import { formatFriendlyDate } from "./date";
+
 export type RepeatKind =
   | "none"
   | "daily"
@@ -84,4 +86,28 @@ export function repeatLabel(rrule: string | null): string {
     }
     case "advanced": return "Custom schedule";
   }
+}
+
+/** Human-readable repeat summary for the Coming up card meta line.
+ *  Returns null for non-repeating events. */
+export function repeatSummary(rrule: string | null, repeat_end_date: string | null): string | null {
+  if (!rrule) return null;
+  const v = rruleToRepeat(rrule);
+  let label: string;
+  switch (v.kind) {
+    case "none": return null;
+    case "daily":   label = "daily"; break;
+    case "weekly":  label = "weekly"; break;
+    case "monthly": label = "monthly"; break;
+    case "custom": {
+      const [singular, plural] = UNIT_LABEL[v.intervalUnit];
+      label = v.intervalN === 1
+        ? `every ${singular}`
+        : `every ${v.intervalN} ${plural}`;
+      break;
+    }
+    case "advanced": label = "on a custom schedule"; break;
+  }
+  if (!repeat_end_date) return `Repeats ${label}`;
+  return `Repeats ${label} until ${formatFriendlyDate(repeat_end_date)}`;
 }

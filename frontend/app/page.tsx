@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DBEvent,
+  DBReminder,
   DetailEvent,
   EventInput,
   EventsResponse,
@@ -18,6 +19,7 @@ import {
   todayLocalString,
   isoToLocalDateString,
   formatFriendlyDate,
+  formatTime,
 } from "@/lib/date";
 import { registerServiceWorker, enableNotifications, isIOS, isIOSChrome, isStandalone } from "@/lib/push";
 import YearGrid from "@/components/YearGrid";
@@ -74,11 +76,9 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detail, setDetail] = useState<DetailState | null>(null);
 
-  // Notification banner state (null = not yet checked, avoids SSR mismatch)
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Undo toast
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -87,8 +87,6 @@ export default function Home() {
     if (res.ok) setData(await res.json());
   }, []);
 
-  // On mount: register SW and re-subscribe to push if permission was already granted
-  // (handles the case where the user logged out then back in).
   useEffect(() => {
     if (typeof window === "undefined") return;
     registerServiceWorker().catch(() => {});
@@ -107,8 +105,6 @@ export default function Home() {
       .then((s: Settings | null) => s && setSettings(s))
       .catch(() => {});
 
-    // Persist the browser timezone so the Edge Function backfill computes
-    // fire_at in the user's local time (INV-1 / KP-3).
     fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -124,13 +120,11 @@ export default function Home() {
       ...patch,
     }));
 
-  // ── Notification enable (called from banner button — user gesture) ──────────
   const handleEnableNotifications = async () => {
     const perm = await enableNotifications();
     if (perm) setNotifPermission(perm);
   };
 
-  // Show banner when: permission not yet decided, OR on iOS but not yet in standalone mode
   const showNotifBanner =
     !bannerDismissed &&
     (notifPermission === "default" || (isIOS() && !isStandalone() && notifPermission !== null));
@@ -204,14 +198,13 @@ export default function Home() {
       return rest.length ? rest : null;
     });
 
-  // ── Mark as complete (per reminder occurrence) ───────────────────────────────
+  // ── Mark as complete ────────────────────────────────────────────────────────
   const patchComplete = useCallback(async (reminderId: string, completed: boolean) => {
     await fetch(`/api/reminders/${reminderId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ completed }),
     });
-    // Optimistically update the detail modal state.
     setDetail((prev) => {
       if (!prev) return null;
       return {
@@ -228,7 +221,6 @@ export default function Home() {
 
   const completeReminder = useCallback(async (reminderId: string) => {
     await patchComplete(reminderId, true);
-    // Show undo toast for ~5 s.
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ reminderIds: [reminderId] });
     toastTimerRef.current = setTimeout(() => setToast(null), 5000);
@@ -242,7 +234,6 @@ export default function Home() {
     await Promise.all(ids.map((id) => patchComplete(id, false)));
   }, [toast, patchComplete]);
 
-  // onComplete handler for DetailModal (single reminder).
   const handleComplete = useCallback((reminderId: string, completed: boolean) => {
     if (completed) {
       completeReminder(reminderId);
@@ -251,7 +242,6 @@ export default function Home() {
     }
   }, [completeReminder, patchComplete]);
 
-  // onComplete handler for UpcomingList (cascades over all ids in a group).
   const handleCompleteGroup = useCallback(async (ids: string[]) => {
     await Promise.all(ids.map((id) => patchComplete(id, true)));
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -263,8 +253,7 @@ export default function Home() {
   const openDetailByDate = (date: string) => {
     if (!data) return;
     const today = todayLocalString();
-    // Find all day-of reminders for this date (completed or not) for undo support.
-    const remindersByEventId = new Map<string, typeof data.reminders[0]>();
+    const remindersByEventId = new Map<string, DBReminder>();
     for (const r of data.reminders) {
       if (isoToLocalDateString(r.fire_at) === date) {
         remindersByEventId.set(r.event_id, r);
@@ -279,6 +268,7 @@ export default function Home() {
           reminderId: r.id,
           reminderCompleted: r.completed,
           isOverdue: date < today && !r.completed,
+          occurrenceDate: date,
         };
       });
     if (detailEvents.length === 0) return;
@@ -288,6 +278,16 @@ export default function Home() {
   const openDetailByReminder = (r: UpcomingReminder) => {
     if (!data) return;
     const today = todayLocalString();
+    // Determine the actual occurrence date (day-of fire date, not early reminder date).
+    let occDate: string;
+    if (r.kind === "day-of") {
+      occDate = isoToLocalDateString(r.fire_at);
+    } else {
+      const dayOf = data.upcoming.find(
+        (up) => up.event_id === r.event_id && up.kind === "day-of" && up.fire_at > r.fire_at
+      );
+      occDate = dayOf ? isoToLocalDateString(dayOf.fire_at) : isoToLocalDateString(r.fire_at);
+    }
     const events: DetailEvent[] = data.events
       .filter((e) => e.id === r.event_id)
       .map((e) => ({
@@ -295,6 +295,7 @@ export default function Home() {
         reminderId: r.id,
         reminderCompleted: r.completed,
         isOverdue: isoToLocalDateString(r.fire_at) < today && !r.completed,
+        occurrenceDate: occDate,
       }));
     if (events.length === 0) return;
     setDetail({ title: r.title, events });
@@ -312,15 +313,61 @@ export default function Home() {
     await loadEvents();
   };
 
+  // P5: delete a single occurrence of a repeating event.
+  const deleteOccurrence = async (eventId: string, date: string) => {
+    setDetail(null);
+    await fetch(`/api/events/${eventId}/occurrence`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date, timezone: getLocalTimezone() }),
+    });
+    await loadEvents();
+  };
+
   const butler = settings?.butler_name?.trim() || "your butler";
   const userSuffix = settings?.user_name?.trim()
     ? `, ${settings.user_name.trim()}`
     : "";
 
-  const groupedUpcoming = useMemo(
-    () => groupUpcoming(data?.upcoming ?? []),
+  // Build events map for groupUpcoming.
+  const eventsMap = useMemo(
+    () => new Map((data?.events ?? []).map((e) => [e.id, e])),
     [data]
   );
+
+  const groupedUpcoming = useMemo(
+    () => groupUpcoming(data?.upcoming ?? [], eventsMap),
+    [data, eventsMap]
+  );
+
+  // P4: compute overdue groups (past uncompleted day-of reminders, collapsed per event).
+  const overdueGroups = useMemo(() => {
+    if (!data) return [];
+    const today = todayLocalString();
+    const byEvent = new Map<string, { event: DBEvent | undefined; dates: string[]; ids: string[] }>();
+    for (const r of data.reminders) {
+      const date = isoToLocalDateString(r.fire_at);
+      if (date < today && !r.completed) {
+        if (!byEvent.has(r.event_id)) {
+          byEvent.set(r.event_id, {
+            event: eventsMap.get(r.event_id),
+            dates: [],
+            ids: [],
+          });
+        }
+        const g = byEvent.get(r.event_id)!;
+        g.dates.push(date);
+        g.ids.push(r.id);
+      }
+    }
+    return Array.from(byEvent.entries()).map(([eventId, g]) => ({
+      eventId,
+      event: g.event,
+      latestDate: [...g.dates].sort().at(-1)!,
+      missedCount: g.dates.length,
+      ids: g.ids,
+    }));
+  }, [data, eventsMap]);
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
@@ -443,9 +490,55 @@ export default function Home() {
         </h2>
         <YearGrid
           reminders={data?.reminders ?? []}
+          events={data?.events ?? []}
           onCellClick={openDetailByDate}
         />
       </section>
+
+      {/* P4: Overdue section — above Coming up */}
+      {overdueGroups.length > 0 && (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold text-red-600">Overdue</h2>
+          <ul className="flex flex-col gap-2">
+            {overdueGroups.map((og) => (
+              <li key={og.eventId}>
+                <div className="flex w-full items-center rounded-lg border border-red-200 bg-red-50">
+                  <button
+                    type="button"
+                    onClick={() => openDetailByDate(og.latestDate)}
+                    className="flex flex-1 items-center gap-3 px-4 py-3 text-left"
+                  >
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full"
+                      style={{ backgroundColor: og.event?.color ?? "#ef4444" }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-gray-900">
+                        {og.event?.title ?? "Reminder"}
+                      </span>
+                      <span className="block text-xs text-red-500">
+                        {og.missedCount > 1
+                          ? `${og.missedCount} missed · latest ${formatFriendlyDate(og.latestDate)}`
+                          : `Missed: ${formatFriendlyDate(og.latestDate)}`}
+                        {og.event?.time ? ` · ${formatTime(og.event.time)}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCompleteGroup(og.ids)}
+                    aria-label="Clear overdue"
+                    title="Mark as complete"
+                    className="shrink-0 px-3 py-3 text-red-300 transition-colors hover:text-green-600"
+                  >
+                    <CheckIcon />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-medium text-gray-700">Coming up</h2>
@@ -463,6 +556,7 @@ export default function Home() {
           onClose={() => setDetail(null)}
           onEdit={startEdit}
           onDelete={deleteEvent}
+          onDeleteOccurrence={deleteOccurrence}
           onComplete={handleComplete}
         />
       )}
@@ -473,7 +567,6 @@ export default function Home() {
         onSaved={mergeSettings}
       />
 
-      {/* Undo toast */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-5 py-3 text-sm text-white shadow-lg">
           <span>Marked as complete</span>
@@ -487,6 +580,24 @@ export default function Home() {
         </div>
       )}
     </main>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
   );
 }
 

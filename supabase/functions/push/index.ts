@@ -301,6 +301,9 @@ async function backfill(): Promise<number> {
       if (shortHorizon < limit) limit = shortHorizon;
     }
 
+    // Build set of excluded occurrence dates (YYYY-MM-DD) to skip.
+    const excludedDates = new Set<string>((ev.excluded_dates ?? []) as string[]);
+
     const occurrences = rule.between(dtstart, limit, true).slice(0, MAX_ROWS);
 
     const { data: existing } = await supabase
@@ -316,6 +319,14 @@ async function backfill(): Promise<number> {
 
     const newRows = [];
     for (const occ of occurrences) {
+      // Skip individually-deleted occurrences.
+      const occDateStr = [
+        occ.getUTCFullYear(),
+        String(occ.getUTCMonth() + 1).padStart(2, "0"),
+        String(occ.getUTCDate()).padStart(2, "0"),
+      ].join("-");
+      if (excludedDates.has(occDateStr)) continue;
+
       const fireAt = wallTimeToUtcIso(
         occ.getUTCFullYear(),
         occ.getUTCMonth() + 1,

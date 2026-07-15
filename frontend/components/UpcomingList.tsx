@@ -63,7 +63,11 @@ export default function UpcomingList({ upcoming, onSelect, onComplete }: Upcomin
                     {formatFriendlyDate(isoToLocalDateString(r.fire_at))}
                     {" · "}
                     {formatTime(r.time)}
-                    {g.hasEarly ? " · early reminder" : ""}
+                    {g.repeatSummary
+                      ? ` · ${g.repeatSummary}`
+                      : g.hasEarly
+                      ? " · early reminder"
+                      : ""}
                   </span>
                 </span>
                 {r.location && (

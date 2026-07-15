@@ -83,7 +83,19 @@ function occurrenceDates(event: EventInput): Date[] {
   // pure date generator, independent of DST.
   const dtstart = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0));
 
-  if (!event.rrule) return [dtstart];
+  const excluded = new Set<string>(event.excluded_dates ?? []);
+  const isExcluded = (date: Date) => {
+    const s = [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, "0"),
+      String(date.getUTCDate()).padStart(2, "0"),
+    ].join("-");
+    return excluded.has(s);
+  };
+
+  if (!event.rrule) {
+    return isExcluded(dtstart) ? [] : [dtstart];
+  }
 
   const baseUntil = event.repeat_end_date
     ? (() => {
@@ -102,7 +114,7 @@ function occurrenceDates(event: EventInput): Date[] {
 
   const rule = rrulestr(event.rrule, { dtstart });
   const all = rule.between(dtstart, until, true);
-  return all.slice(0, MAX_ROWS_PER_EVENT);
+  return all.filter((d) => !isExcluded(d)).slice(0, MAX_ROWS_PER_EVENT);
 }
 
 // Compute UTC fire_at for an early reminder: event time minus the given offset.

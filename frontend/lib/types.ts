@@ -11,6 +11,8 @@ export interface EventInput {
   rrule: string | null;
   repeat_end_date: string | null;
   color: string;
+  /** Occurrence dates (YYYY-MM-DD) that have been individually deleted. */
+  excluded_dates?: string[];
 }
 
 export interface DBEvent extends EventInput {
@@ -62,6 +64,10 @@ export interface UpcomingGroup {
   hasEarly: boolean;
   /** min(fire_at) across the group — already the natural sort order */
   sortFireAt: string;
+  /** Human-readable repeat summary, e.g. "Repeats weekly until Aug 30, 2026". Null for non-repeating. */
+  repeatSummary: string | null;
+  /** The actual event occurrence date (YYYY-MM-DD) for this card — used for occurrence deletion. */
+  occurrenceDate: string | null;
 }
 
 // DBEvent enriched with the specific reminder occurrence for DetailModal display.
@@ -69,6 +75,7 @@ export interface DetailEvent extends DBEvent {
   reminderId: string | null;      // null only if no day-of reminder found for this date
   reminderCompleted: boolean;
   isOverdue: boolean;             // date < today && !reminderCompleted
+  occurrenceDate: string | null;  // the specific occurrence date (YYYY-MM-DD) shown in this modal
 }
 
 // GET /api/events response
