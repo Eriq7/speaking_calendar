@@ -12,6 +12,8 @@ interface YearGridProps {
   reminders: DBReminder[];
   events: DBEvent[];
   onCellClick: (date: string) => void;
+  /** Current timestamp in ms — used to detect same-day passed reminders. */
+  nowMs: number;
 }
 
 interface Cell {
@@ -47,7 +49,7 @@ function buildWeeks(year: number): Cell[][] {
   return weeks;
 }
 
-export default function YearGrid({ reminders, events, onCellClick }: YearGridProps) {
+export default function YearGrid({ reminders, events, onCellClick, nowMs }: YearGridProps) {
   const year = new Date().getFullYear();
   const today = todayLocalString();
 
@@ -78,8 +80,9 @@ export default function YearGrid({ reminders, events, onCellClick }: YearGridPro
   );
 
   // P3: compute solid vs dot rendering per date.
-  // P4: track overdue (past + uncompleted).
-  const { solidColorsByDate, dotColorsByDate, hasUncompletedByDate } = useMemo(() => {
+  // P4: track overdue — any day-of reminder whose fire time has passed and is uncompleted,
+  //     including same-day reminders (fire_at <= nowMs covers today as well as past days).
+  const { solidColorsByDate, dotColorsByDate, hasOverdueByDate } = useMemo(() => {
     // For repeating events: find the earliest uncompleted future date → solid; later ones → dot.
     const nextDateByEvent = new Map<string, string>();
     for (const r of reminders) {
@@ -94,12 +97,16 @@ export default function YearGrid({ reminders, events, onCellClick }: YearGridPro
 
     const solid = new Map<string, string[]>();
     const dot = new Map<string, string[]>();
-    const hasUncompleted = new Map<string, boolean>();
+    const hasOverdue = new Map<string, boolean>();
 
     for (const r of reminders) {
       if (!r.completed) {
         const date = isoToLocalDateString(r.fire_at);
-        hasUncompleted.set(date, true);
+
+        // Mark the date as having an overdue reminder if the fire moment has passed.
+        if (new Date(r.fire_at).getTime() <= nowMs) {
+          hasOverdue.set(date, true);
+        }
 
         const isRepeat = rruleEventIds.has(r.event_id);
         const isNext = !isRepeat || nextDateByEvent.get(r.event_id) === date;
@@ -116,8 +123,8 @@ export default function YearGrid({ reminders, events, onCellClick }: YearGridPro
       }
     }
 
-    return { solidColorsByDate: solid, dotColorsByDate: dot, hasUncompletedByDate: hasUncompleted };
-  }, [reminders, rruleEventIds, today]);
+    return { solidColorsByDate: solid, dotColorsByDate: dot, hasOverdueByDate: hasOverdue };
+  }, [reminders, rruleEventIds, today, nowMs]);
 
   const monthLabels = useMemo(() => {
     const labels: (string | null)[] = [];
@@ -166,7 +173,7 @@ export default function YearGrid({ reminders, events, onCellClick }: YearGridPro
                   today={today}
                   colors={solidColorsByDate.get(cell.date) ?? []}
                   dotColors={dotColorsByDate.get(cell.date) ?? []}
-                  hasUncompletedReminder={hasUncompletedByDate.get(cell.date) ?? false}
+                  hasUncompletedReminder={hasOverdueByDate.get(cell.date) ?? false}
                   onClick={() => onCellClick(cell.date)}
                 />
               ))}
@@ -198,22 +205,29 @@ function YearCell({ cell, today, colors, dotColors, hasUncompletedReminder, onCl
   const base = "h-3 w-3 rounded-sm transition-transform hover:scale-125 focus:outline-none";
   const todayRing = isToday ? " ring-1 ring-accent" : "";
 
+  // P4: show red ✕ for any cell (past OR today) that has an uncompleted passed reminder.
+  if (hasUncompletedReminder && (isPast || isToday)) {
+    // Past cells use the flat past-cell background; today keeps its color if it has one.
+    const bgClass = isPast ? " bg-past-cell" : colors.length > 0 ? "" : " bg-surface border border-border";
+    const bgStyle = !isPast && colors.length === 1 ? { backgroundColor: colors[0] } : undefined;
+    return (
+      <button
+        type="button"
+        title={cell.date}
+        onClick={onClick}
+        className={`${base}${bgClass}${todayRing} relative overflow-hidden`}
+        style={bgStyle}
+      >
+        {!isPast && colors.length > 1 && <Quadrants colors={colors} />}
+        <span className="absolute inset-0 flex items-center justify-center text-red-500" style={{ fontSize: "7px", fontWeight: 700, lineHeight: 1 }}>
+          ✕
+        </span>
+      </button>
+    );
+  }
+
+  // Plain past cell (no overdue reminder).
   if (isPast) {
-    // P4: overdue past cell shows a red ✕ instead of ring.
-    if (hasUncompletedReminder) {
-      return (
-        <button
-          type="button"
-          title={cell.date}
-          onClick={onClick}
-          className={`${base} bg-past-cell${todayRing} relative overflow-hidden`}
-        >
-          <span className="absolute inset-0 flex items-center justify-center text-red-500" style={{ fontSize: "7px", fontWeight: 700, lineHeight: 1 }}>
-            ✕
-          </span>
-        </button>
-      );
-    }
     return (
       <button
         type="button"

@@ -74,7 +74,7 @@ export interface UpcomingGroup {
 export interface DetailEvent extends DBEvent {
   reminderId: string | null;      // null only if no day-of reminder found for this date
   reminderCompleted: boolean;
-  isOverdue: boolean;             // date < today && !reminderCompleted
+  isOverdue: boolean;             // fire_at <= now && !reminderCompleted
   occurrenceDate: string | null;  // the specific occurrence date (YYYY-MM-DD) shown in this modal
 }
 

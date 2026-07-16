@@ -83,6 +83,22 @@ export default function Home() {
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // INV-12: "not complete" is computed on the frontend from live time (never the backend).
+  // Tick every minute so an open tab updates without a manual reload.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const bump = () => setNow(Date.now());
+    const id = setInterval(bump, 60_000);
+    // Also refresh immediately when the user returns to the tab (e.g. after dismissing a push).
+    window.addEventListener("visibilitychange", bump);
+    window.addEventListener("focus", bump);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("visibilitychange", bump);
+      window.removeEventListener("focus", bump);
+    };
+  }, []);
+
   const loadEvents = useCallback(async () => {
     const res = await fetch("/api/events");
     if (res.ok) setData(await res.json());
@@ -254,7 +270,7 @@ export default function Home() {
   // ── Detail modal helpers ─────────────────────────────────────────────────────
   const openDetailByDate = (date: string) => {
     if (!data) return;
-    const today = todayLocalString();
+    const nowIso = new Date().toISOString();
     const remindersByEventId = new Map<string, DBReminder>();
     for (const r of data.reminders) {
       if (isoToLocalDateString(r.fire_at) === date) {
@@ -269,7 +285,7 @@ export default function Home() {
           ...e,
           reminderId: r.id,
           reminderCompleted: r.completed,
-          isOverdue: date < today && !r.completed,
+          isOverdue: r.fire_at <= nowIso && !r.completed,
           occurrenceDate: date,
         };
       });
@@ -279,7 +295,7 @@ export default function Home() {
 
   const openDetailByReminder = (r: UpcomingReminder) => {
     if (!data) return;
-    const today = todayLocalString();
+    const nowIso = new Date().toISOString();
     // Determine the actual occurrence date (day-of fire date, not early reminder date).
     let occDate: string;
     if (r.kind === "day-of") {
@@ -296,7 +312,7 @@ export default function Home() {
         ...e,
         reminderId: r.id,
         reminderCompleted: r.completed,
-        isOverdue: isoToLocalDateString(r.fire_at) < today && !r.completed,
+        isOverdue: r.fire_at <= nowIso && !r.completed,
         occurrenceDate: occDate,
       }));
     if (events.length === 0) return;
@@ -342,14 +358,15 @@ export default function Home() {
     [data, eventsMap]
   );
 
-  // P4: compute overdue groups (past uncompleted day-of reminders, collapsed per event).
+  // P4: compute "not complete" groups — any day-of reminder whose fire time has
+  // passed (fire_at <= now) and hasn't been completed, collapsed per event.
+  // This includes same-day reminders (e.g. 9:58 AM reminder still uncompleted at 11:00 AM).
   const overdueGroups = useMemo(() => {
     if (!data) return [];
-    const today = todayLocalString();
+    const nowIso = new Date(now).toISOString();
     const byEvent = new Map<string, { event: DBEvent | undefined; dates: string[]; ids: string[] }>();
     for (const r of data.reminders) {
-      const date = isoToLocalDateString(r.fire_at);
-      if (date < today && !r.completed) {
+      if (r.fire_at <= nowIso && !r.completed) {
         if (!byEvent.has(r.event_id)) {
           byEvent.set(r.event_id, {
             event: eventsMap.get(r.event_id),
@@ -358,7 +375,7 @@ export default function Home() {
           });
         }
         const g = byEvent.get(r.event_id)!;
-        g.dates.push(date);
+        g.dates.push(isoToLocalDateString(r.fire_at));
         g.ids.push(r.id);
       }
     }
@@ -369,7 +386,7 @@ export default function Home() {
       missedCount: g.dates.length,
       ids: g.ids,
     }));
-  }, [data, eventsMap]);
+  }, [data, eventsMap, now]);
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">
@@ -494,13 +511,14 @@ export default function Home() {
           reminders={data?.reminders ?? []}
           events={data?.events ?? []}
           onCellClick={openDetailByDate}
+          nowMs={now}
         />
       </section>
 
-      {/* P4: Overdue section — above Coming up */}
+      {/* P4: Not complete section — above Coming up */}
       {overdueGroups.length > 0 && (
         <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold text-red-600">Overdue</h2>
+          <h2 className="mb-3 text-sm font-semibold text-red-600">Not complete</h2>
           <ul className="flex flex-col gap-2">
             {overdueGroups.map((og) => (
               <li key={og.eventId}>

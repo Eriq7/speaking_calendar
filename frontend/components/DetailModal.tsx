@@ -60,7 +60,7 @@ export default function DetailModal({
                 {ev.isOverdue && (
                   <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-red-600">
                     <span aria-hidden>!</span>
-                    <span>Overdue</span>
+                    <span>Not complete</span>
                   </div>
                 )}
 
