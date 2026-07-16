@@ -103,13 +103,21 @@ function buildDateAnchors(today: string): string {
   ].join("\n");
 }
 
-function systemPrompt(today: string, timezone: string): string {
+function systemPrompt(today: string, timezone: string, now: string): string {
   const dateSection = buildDateAnchors(today);
+  // now is "YYYY-MM-DDTHH:mm" — extract just HH:mm for display
+  const currentTime = now.split("T")[1] ?? "00:00";
   return [
     "You extract calendar events from natural language.",
     dateSection,
+    `The current local time is ${currentTime} (HH:MM, 24h).`,
     `User timezone: ${timezone}.`,
     'Resolve relative dates using the anchors above. "下周X" = next calendar week\'s weekday X (use the table, not +7 days).',
+    "For relative-time expressions, compute the target from the current date and time given above:",
+    "  • '10分钟后'/'in 10 min' → add 10 minutes to current time; advance the date if crossing midnight.",
+    "  • 'X小时后'/'in X hours' → add X hours; advance the date if crossing midnight.",
+    "  • 'X天后'/'in X days' / '明天' (with no explicit clock time) → advance the date by X days, keep the current HH:MM as the time.",
+    "  • If the user explicitly states a clock time ('下午3点'), use that time instead of the current time.",
     "Return every distinct event. If none, return an empty events array.",
     "Use 24h HH:MM time; null for all-day events.",
     "For advance reminders use early_value + early_unit: '提前3小时' → early_value:3, early_unit:\"hour\"; '提前2天' → early_value:2, early_unit:\"day\".",
@@ -122,7 +130,8 @@ function systemPrompt(today: string, timezone: string): string {
 export async function parseWithAI(
   text: string,
   timezone: string,
-  today: string
+  today: string,
+  now: string
 ): Promise<EventInput[]> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -133,7 +142,7 @@ export async function parseWithAI(
   const completion = await client.chat.completions.create({
     model: MODEL,
     messages: [
-      { role: "system", content: systemPrompt(today, timezone) },
+      { role: "system", content: systemPrompt(today, timezone, now) },
       { role: "user", content: text },
     ],
     tools: [

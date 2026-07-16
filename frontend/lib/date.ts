@@ -12,6 +12,14 @@ export function todayLocalString(): string {
   return toLocalDateString(new Date());
 }
 
+export function nowLocalString(): string {
+  const d = new Date();
+  const date = toLocalDateString(d);
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${date}T${h}:${min}`;
+}
+
 // Local date string of an ISO-8601 UTC timestamp, in the browser's timezone.
 export function isoToLocalDateString(iso: string): string {
   return toLocalDateString(new Date(iso));

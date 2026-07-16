@@ -90,6 +90,7 @@ export interface ParseRequest {
   text: string;
   timezone: string;
   today: string;
+  now: string; // local YYYY-MM-DDTHH:mm — used to resolve relative-time expressions
 }
 export interface ParseResponse {
   events: EventInput[];

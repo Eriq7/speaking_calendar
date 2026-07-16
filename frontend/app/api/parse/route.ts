@@ -20,10 +20,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { text, timezone, today } = body;
-  if (!text?.trim() || !timezone || !today) {
+  const { text, timezone, today, now } = body;
+  if (!text?.trim() || !timezone || !today || !now) {
     return NextResponse.json(
-      { error: "text, timezone and today are required" },
+      { error: "text, timezone, today and now are required" },
       { status: 400 }
     );
   }
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   if (!allowed) return NextResponse.json({ error: "Daily parse limit reached. Try again tomorrow." }, { status: 429 });
 
   try {
-    const events = await parseWithAI(text, timezone, today);
+    const events = await parseWithAI(text, timezone, today, now);
     const res: ParseResponse = { events };
     return NextResponse.json(res);
   } catch (err) {

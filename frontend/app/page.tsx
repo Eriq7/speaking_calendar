@@ -17,6 +17,7 @@ import { groupUpcoming } from "@/lib/upcoming";
 import {
   getLocalTimezone,
   todayLocalString,
+  nowLocalString,
   isoToLocalDateString,
   formatFriendlyDate,
   formatTime,
@@ -142,6 +143,7 @@ export default function Home() {
           text,
           timezone: getLocalTimezone(),
           today: todayLocalString(),
+          now: nowLocalString(),
         }),
       });
       if (!res.ok) {
