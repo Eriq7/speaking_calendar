@@ -165,7 +165,7 @@ export default function SettingsPanel({
               <p className="text-xs text-green-700">✓ Notifications are enabled.</p>
               {isIOS() && (
                 <p className="mt-1.5 text-xs text-gray-500">
-                  If notifications aren&apos;t showing up, check: <strong>iPhone Settings → Safari → Notifications → Talk Reminder</strong> and make sure it&apos;s set to Allow.
+                  If notifications aren&apos;t showing up, check: <strong>iPhone Settings → Notifications → Talk Reminder</strong> → Allow Notifications ON, Sounds ON.
                 </p>
               )}
             </div>
@@ -184,7 +184,7 @@ export default function SettingsPanel({
               </button>
               {isIOS() && (
                 <p className="mt-2 text-xs text-gray-500">
-                  After allowing, also check: <strong>iPhone Settings → Safari → Notifications</strong> is turned on.
+                  After allowing, also check: <strong>iPhone Settings → Notifications → Talk Reminder</strong> → Sounds ON.
                 </p>
               )}
             </div>
