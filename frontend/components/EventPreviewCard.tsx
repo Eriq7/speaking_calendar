@@ -4,8 +4,13 @@ import { EventInput, EarlyUnit } from "@/lib/types";
 import {
   RepeatKind,
   RepeatFreq,
+  WeekdayCode,
+  WEEKDAY_CODES,
+  WEEKDAY_SHORT,
   rruleToRepeat,
   repeatToRrule,
+  orderByday,
+  humanizeRrule,
 } from "@/lib/repeat";
 import ColorPicker from "./ColorPicker";
 
@@ -35,6 +40,16 @@ const REPEAT_FREQ_OPTIONS: { value: RepeatFreq; label: string }[] = [
   { value: "MONTHLY",  label: "months" },
 ];
 
+// Derive the weekday RRULE code (MO–SU) for a YYYY-MM-DD date string.
+// Uses UTC midnight to match the convention in expand.ts.
+function weekdayCodeForDate(dateStr: string): WeekdayCode {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
+  // Map JS getUTCDay() to Mon-first WEEKDAY_CODES index: Sun→6, Mon→0 … Sat→5
+  const idx = dow === 0 ? 6 : dow - 1;
+  return WEEKDAY_CODES[idx];
+}
+
 export default function EventPreviewCard({
   event,
   onUpdate,
@@ -57,6 +72,24 @@ export default function EventPreviewCard({
 
   const onCustomRepeat = (n: number, unit: RepeatFreq) =>
     set("rrule", repeatToRrule({ kind: "custom", intervalN: n, intervalUnit: unit }));
+
+  // The effective weekdays shown as selected in the chip row.
+  // When byday is empty (plain FREQ=WEEKLY), highlight the event's start-day weekday.
+  const effectiveDays: WeekdayCode[] =
+    repeat.kind === "weekly"
+      ? (repeat.byday && repeat.byday.length > 0
+          ? repeat.byday
+          : [weekdayCodeForDate(event.date)])
+      : [];
+
+  const onToggleWeekday = (code: WeekdayCode) => {
+    const current = effectiveDays;
+    const next = current.includes(code)
+      ? current.filter((c) => c !== code)
+      : [...current, code];
+    if (next.length === 0) return; // enforce ≥1 day
+    set("rrule", repeatToRrule({ kind: "weekly", intervalN: 1, intervalUnit: "WEEKLY", byday: orderByday(next) }));
+  };
 
   return (
     <div
@@ -170,11 +203,40 @@ export default function EventPreviewCard({
             <option value="monthly">Monthly</option>
             <option value="custom">Every N [unit]</option>
             {repeat.kind === "advanced" && (
-              <option value="advanced">Custom schedule (keeps original)</option>
+              <option value="advanced">
+                {event.rrule ? humanizeRrule(event.rrule) : "Advanced"}
+              </option>
             )}
           </select>
         </div>
       </div>
+
+      {/* Weekday chip selector — shown for weekly repeats */}
+      {repeat.kind === "weekly" && (
+        <div className="mt-3">
+          <label className={labelClass}>Repeat on</label>
+          <div className="flex flex-wrap gap-1.5">
+            {WEEKDAY_CODES.map((code) => {
+              const selected = effectiveDays.includes(code);
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => onToggleWeekday(code)}
+                  className={
+                    "rounded-full px-2.5 py-1 text-xs font-medium border transition-colors " +
+                    (selected
+                      ? "bg-accent text-white border-accent"
+                      : "border-border text-gray-600 hover:border-gray-400")
+                  }
+                >
+                  {WEEKDAY_SHORT[code]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Every N [unit] controls */}
       {repeat.kind === "custom" && (
