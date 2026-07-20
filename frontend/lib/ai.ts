@@ -122,6 +122,12 @@ function systemPrompt(today: string, timezone: string, now: string): string {
     "Use 24h HH:MM time; null for all-day events.",
     "For advance reminders use early_value + early_unit: '提前3小时' → early_value:3, early_unit:\"hour\"; '提前2天' → early_value:2, early_unit:\"day\".",
     "Only set rrule for genuinely recurring events, using iCalendar RRULE syntax.",
+    "Weekly recurrence — grouping rules (important):",
+    "  • One recurring activity is ALWAYS a single event. If it happens on several weekdays, put ALL of them in one BYDAY. Never split the same activity into multiple events (do NOT emit BYDAY=MO,WE in one event and BYDAY=TU in another — that is wrong).",
+    "  • Weekday ranges are inclusive: '周一到周三' / '周一至周五' / 'Monday to Wednesday' means every weekday in the closed range. '周一到周三' → BYDAY=MO,TU,WE (not MO,WE).",
+    "  • Weekday lists map directly: '周一、周四、周五' → BYDAY=MO,TH,FR (still one single event).",
+    "  • Always list BYDAY codes in Monday→Sunday order: MO,TU,WE,TH,FR,SA,SU.",
+    "  • Concrete example: '每周一到周三晚上6点去健身' → ONE event, rrule='FREQ=WEEKLY;BYDAY=MO,TU,WE', time=18:00.",
     "Pick a pleasant, distinct hex color per event.",
   ].join("\n");
 }
