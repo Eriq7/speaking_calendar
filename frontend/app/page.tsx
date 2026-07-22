@@ -22,7 +22,7 @@ import {
   formatFriendlyDate,
   formatTime,
 } from "@/lib/date";
-import { registerServiceWorker, enableNotifications, isIOS, isIOSChrome, isStandalone } from "@/lib/push";
+import { registerServiceWorker, enableNotifications, isIOS, isIOSChrome, isStandalone, setBadge } from "@/lib/push";
 import YearGrid from "@/components/YearGrid";
 import UpcomingList from "@/components/UpcomingList";
 import EventPreviewCard from "@/components/EventPreviewCard";
@@ -387,6 +387,14 @@ export default function Home() {
       ids: g.ids,
     }));
   }, [data, eventsMap, now]);
+
+  const overdueCount = useMemo(() => {
+    if (!data) return 0;
+    const nowIso = new Date(now).toISOString();
+    return data.reminders.filter((r) => r.fire_at <= nowIso && !r.completed).length;
+  }, [data, now]);
+
+  useEffect(() => { setBadge(overdueCount); }, [overdueCount]);
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-6">

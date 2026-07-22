@@ -46,6 +46,14 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 // Must be called from a user gesture (e.g. button onClick) so that Chrome and
 // Safari show the real permission modal instead of silently ignoring the request.
 // Returns the resulting NotificationPermission, or null if unsupported.
+export async function setBadge(count: number): Promise<void> {
+  if (typeof navigator === "undefined" || !("setAppBadge" in navigator)) return;
+  try {
+    if (count > 0) await (navigator as Navigator & { setAppBadge(n: number): Promise<void> }).setAppBadge(count);
+    else if ("clearAppBadge" in navigator) await (navigator as Navigator & { clearAppBadge(): Promise<void> }).clearAppBadge();
+  } catch { /* non-fatal */ }
+}
+
 export async function enableNotifications(): Promise<NotificationPermission | null> {
   if (typeof window === "undefined") return null;
   if (!("Notification" in window) || !("serviceWorker" in navigator)) return null;

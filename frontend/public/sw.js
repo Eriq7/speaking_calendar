@@ -25,7 +25,15 @@ self.addEventListener("push", (event) => {
     tag: data.tag,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  const tasks = [self.registration.showNotification(title, options)];
+  if (typeof data.badge === "number" && "setAppBadge" in self.navigator) {
+    tasks.push(
+      data.badge > 0
+        ? self.navigator.setAppBadge(data.badge)
+        : self.navigator.clearAppBadge()
+    );
+  }
+  event.waitUntil(Promise.all(tasks));
 });
 
 self.addEventListener("notificationclick", (event) => {

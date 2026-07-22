@@ -164,9 +164,14 @@ export default function SettingsPanel({
             <div>
               <p className="text-xs text-green-700">✓ Notifications are enabled.</p>
               {isIOS() && (
-                <p className="mt-1.5 text-xs text-gray-500">
-                  If notifications aren&apos;t showing up, check: <strong>iPhone Settings → Notifications → Talk Reminder</strong> → Allow Notifications ON, Sounds ON.
-                </p>
+                <>
+                  <p className="mt-1.5 text-xs text-gray-500">
+                    If notifications aren&apos;t showing up, check: <strong>iPhone Settings → Notifications → Talk Reminder</strong> → Allow Notifications ON, Sounds ON.
+                  </p>
+                  <p className="mt-1.5 text-xs text-gray-500">
+                    For reminders you might sleep through: <strong>iPhone Settings → Notifications → Talk Reminder</strong> → turn on <strong>Lock Screen</strong>, and set <strong>Banner Style → Persistent</strong> so alerts wait for you.
+                  </p>
+                </>
               )}
             </div>
           ) : notifStatus === "denied" ? (

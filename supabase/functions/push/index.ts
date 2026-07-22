@@ -179,9 +179,18 @@ async function sendDue(): Promise<SendResult> {
       .eq("user_id", userId);
     const subscriptions = (subs ?? []) as Subscription[];
 
+    // Compute the absolute "not complete" badge count for this user.
+    const { count: badgeCount } = await supabase
+      .from("reminders")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("completed", false)
+      .lte("fire_at", nowIso);
+    const badge = badgeCount ?? 0;
+
     for (const reminder of userReminders) {
       const message = buildMessage(reminder, userName, butlerName);
-      const payload = JSON.stringify({ ...message, color: reminder.color });
+      const payload = JSON.stringify({ ...message, color: reminder.color, badge });
 
       const results = await Promise.all(
         subscriptions.map(async (sub) => {
