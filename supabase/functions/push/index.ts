@@ -132,6 +132,9 @@ interface SendResult {
 
 async function sendDue(): Promise<SendResult> {
   const nowIso = new Date().toISOString();
+  const year = new Date().getUTCFullYear();
+  const yearStart = `${year}-01-01T00:00:00Z`;
+  const yearEnd = `${year}-12-31T23:59:59Z`;
 
   const { data: due, error } = await supabase
     .from("reminders")
@@ -180,12 +183,18 @@ async function sendDue(): Promise<SendResult> {
     const subscriptions = (subs ?? []) as Subscription[];
 
     // Compute the absolute "not complete" badge count for this user.
+    // Mirrors the frontend's overdueCount exactly: day-of only, current calendar
+    // year, completed=false, fire_at<=now. This ensures the push-written badge
+    // and the app-open-written badge always agree (no flip-flop).
     const { count: badgeCount } = await supabase
       .from("reminders")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
+      .eq("kind", "day-of")
       .eq("completed", false)
-      .lte("fire_at", nowIso);
+      .lte("fire_at", nowIso)
+      .gte("fire_at", yearStart)
+      .lte("fire_at", yearEnd);
     const badge = badgeCount ?? 0;
 
     for (const reminder of userReminders) {
