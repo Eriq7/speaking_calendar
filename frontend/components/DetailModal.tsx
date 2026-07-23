@@ -78,7 +78,7 @@ export default function DetailModal({
 
                 <dl className="space-y-1 text-sm text-gray-600">
                   <Row label="When">
-                    {formatFriendlyDate(ev.date)} · {formatTime(ev.time)}
+                    {formatFriendlyDate(ev.occurrenceDate ?? ev.date)} · {formatTime(ev.time)}
                   </Row>
                   {ev.location && <Row label="Where">{ev.location}</Row>}
                   {ev.note && <Row label="Note">{ev.note}</Row>}

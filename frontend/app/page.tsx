@@ -319,6 +319,26 @@ export default function Home() {
     setDetail({ title: r.title, events });
   };
 
+  // Opens a detail modal scoped to a single reminder (used by the "Not complete" list).
+  const openDetailForReminder = (r: DBReminder) => {
+    const e = data?.events.find((ev) => ev.id === r.event_id);
+    if (!e) return;
+    const nowIso = new Date().toISOString();
+    const occDate = isoToLocalDateString(r.fire_at);
+    setDetail({
+      title: e.title,
+      events: [
+        {
+          ...e,
+          reminderId: r.id,
+          reminderCompleted: r.completed,
+          isOverdue: r.fire_at <= nowIso && !r.completed,
+          occurrenceDate: occDate,
+        },
+      ],
+    });
+  };
+
   const startEdit = (ev: DBEvent) => {
     setDetail(null);
     setEditingId(ev.id);
@@ -358,36 +378,20 @@ export default function Home() {
     [data, eventsMap]
   );
 
-  // P4: compute "not complete" groups — any day-of reminder whose fire time has
-  // passed (fire_at <= now) and hasn't been completed, collapsed per event.
-  // This includes same-day reminders (e.g. 9:58 AM reminder still uncompleted at 11:00 AM).
-  const overdueGroups = useMemo(() => {
+  // P4: compute "not complete" items — one entry per missed day-of reminder
+  // (fire_at <= now, not completed), sorted most-recently-missed first.
+  // Each occurrence of a repeating event gets its own card.
+  const overdueItems = useMemo(() => {
     if (!data) return [];
     const nowIso = new Date(now).toISOString();
-    const byEvent = new Map<string, { event: DBEvent | undefined; dates: string[]; ids: string[] }>();
-    for (const r of data.reminders) {
-      if (r.fire_at <= nowIso && !r.completed) {
-        if (!byEvent.has(r.event_id)) {
-          byEvent.set(r.event_id, {
-            event: eventsMap.get(r.event_id),
-            dates: [],
-            ids: [],
-          });
-        }
-        const g = byEvent.get(r.event_id)!;
-        g.dates.push(isoToLocalDateString(r.fire_at));
-        g.ids.push(r.id);
-      }
-    }
-    return Array.from(byEvent.entries()).map(([eventId, g]) => ({
-      eventId,
-      event: g.event,
-      latestDate: [...g.dates].sort().at(-1)!,
-      missedCount: g.dates.length,
-      ids: g.ids,
-    }));
+    return data.reminders
+      .filter((r) => r.fire_at <= nowIso && !r.completed)
+      .sort((a, b) => (a.fire_at < b.fire_at ? 1 : -1))
+      .map((r) => ({ reminder: r, event: eventsMap.get(r.event_id) }));
   }, [data, eventsMap, now]);
 
+  // overdueCount == overdueItems.length; kept as a separate memo so the badge
+  // effect below stays a pure number dependency (avoids re-running on non-count changes).
   const overdueCount = useMemo(() => {
     if (!data) return 0;
     const nowIso = new Date(now).toISOString();
@@ -523,39 +527,37 @@ export default function Home() {
         />
       </section>
 
-      {/* P4: Not complete section — above Coming up */}
-      {overdueGroups.length > 0 && (
+      {/* P4: Not complete section — one card per missed occurrence, above Coming up */}
+      {overdueItems.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold text-red-600">Not complete</h2>
           <ul className="flex flex-col gap-2">
-            {overdueGroups.map((og) => (
-              <li key={og.eventId}>
+            {overdueItems.map(({ reminder, event }) => (
+              <li key={reminder.id}>
                 <div className="flex w-full items-center rounded-lg border border-red-200 bg-red-50">
                   <button
                     type="button"
-                    onClick={() => openDetailByDate(og.latestDate)}
+                    onClick={() => openDetailForReminder(reminder)}
                     className="flex flex-1 items-center gap-3 px-4 py-3 text-left"
                   >
                     <span
                       className="h-3 w-3 shrink-0 rounded-full"
-                      style={{ backgroundColor: og.event?.color ?? "#ef4444" }}
+                      style={{ backgroundColor: event?.color ?? reminder.color }}
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium text-gray-900">
-                        {og.event?.title ?? "Reminder"}
+                        {event?.title ?? reminder.title}
                       </span>
                       <span className="block text-xs text-red-500">
-                        {og.missedCount > 1
-                          ? `${og.missedCount} missed · latest ${formatFriendlyDate(og.latestDate)}`
-                          : `Missed: ${formatFriendlyDate(og.latestDate)}`}
-                        {og.event?.time ? ` · ${formatTime(og.event.time)}` : ""}
+                        {`Missed: ${formatFriendlyDate(isoToLocalDateString(reminder.fire_at))}`}
+                        {reminder.time ? ` · ${formatTime(reminder.time)}` : ""}
                       </span>
                     </span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleCompleteGroup(og.ids)}
-                    aria-label="Clear overdue"
+                    onClick={() => completeReminder(reminder.id)}
+                    aria-label="Mark as complete"
                     title="Mark as complete"
                     className="shrink-0 px-3 py-3 text-red-300 transition-colors hover:text-green-600"
                   >
