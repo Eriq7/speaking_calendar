@@ -12,10 +12,15 @@ const eventJsonSchema = {
       items: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Short event title" },
+          title: {
+            type: "string",
+            description:
+              "Self-contained event title: capture WHO is involved and WHAT will happen (and the purpose), so the user understands the reminder from the list alone without opening it. Include the people/context that make it meaningful — do NOT reduce it to a bare keyword. Front-load the most identifying info (who + what) at the start. Keep it to one concise line; match the user's input language.",
+          },
           note: {
             type: ["string", "null"],
-            description: "Optional extra detail, else null",
+            description:
+              "Only truly secondary details NOT already in the title — e.g. things to bring, sub-tasks, side notes. Null when the title already conveys everything essential; never restate the title here.",
           },
           date: {
             type: "string",
@@ -109,6 +114,13 @@ function systemPrompt(today: string, timezone: string, now: string): string {
   const currentTime = now.split("T")[1] ?? "00:00";
   return [
     "You extract calendar events from natural language.",
+    "Title & note division (important):",
+    "  • The title must be self-contained: include WHO is involved and WHAT will happen (and its purpose), so the user understands it from the list without opening details. Match the user's input language.",
+    "  • Front-load the most identifying info (who + what) at the START of the title — the list may clamp long titles to 2 lines.",
+    "  • Do NOT shrink the title to a bare keyword, but do NOT dump the entire raw sentence either — keep it to one concise line.",
+    "  • Put ONLY secondary details (things to bring, sub-tasks, side notes) into note. If nothing secondary remains, note = null (do not restate the title).",
+    "  • Example: '明天和女朋友见面，我要跟她去逛商场' → title:'和女朋友见面一起逛商场', note:null. (WRONG: title:'逛商场', note:'和女朋友见面'.)",
+    "  • Example: '周五下午去 Koffler House 找导师聊选课，记得带成绩单' → title:'去Koffler House找导师聊选课', location:'Koffler House', note:'记得带成绩单'.",
     dateSection,
     `The current local time is ${currentTime} (HH:MM, 24h).`,
     `User timezone: ${timezone}.`,

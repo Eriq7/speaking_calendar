@@ -56,7 +56,7 @@ export default function UpcomingList({ upcoming, onSelect, onComplete }: Upcomin
                   style={{ backgroundColor: r.color }}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium text-gray-900">
+                  <span className="block line-clamp-2 font-medium text-gray-900">
                     {r.title}
                   </span>
                   <span className="block text-xs text-gray-500">

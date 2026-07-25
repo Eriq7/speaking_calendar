@@ -545,7 +545,7 @@ export default function Home() {
                       style={{ backgroundColor: event?.color ?? reminder.color }}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-gray-900">
+                      <span className="block line-clamp-2 font-medium text-gray-900">
                         {event?.title ?? reminder.title}
                       </span>
                       <span className="block text-xs text-red-500">
