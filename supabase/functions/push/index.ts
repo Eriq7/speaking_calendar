@@ -301,6 +301,7 @@ async function backfill(): Promise<number> {
   const endOfNextYear = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 11, 31, 23, 59, 59));
   const MAX_ROWS = 500;
   const HIGH_FREQ_HORIZON_MS = 30 * 24 * 3600 * 1000;
+  const nowMs = Date.now();
   let added = 0;
 
   for (const ev of events) {
@@ -329,7 +330,11 @@ async function backfill(): Promise<number> {
       .select("fire_at")
       .eq("event_id", ev.id)
       .eq("kind", "day-of");
-    const existingTimes = new Set((existing ?? []).map((r) => r.fire_at));
+    // Compare by absolute instant, not the raw string: Postgres's returned
+    // format ("...+00:00") never matched `.toISOString()`'s ("...Z"), so this
+    // dedupe silently failed and every weekly backfill re-inserted the whole
+    // series (root cause of the duplicate-reminder bug).
+    const existingMs = new Set((existing ?? []).map((r) => new Date(r.fire_at).getTime()));
 
     const [hh, mm] = ev.time
       ? ev.time.split(":").map(Number)
@@ -353,7 +358,10 @@ async function backfill(): Promise<number> {
         mm,
         tz
       );
-      if (existingTimes.has(fireAt)) continue;
+      const fireMs = new Date(fireAt).getTime();
+      // Backfill extends the horizon forward only — never replay history.
+      if (fireMs <= nowMs) continue;
+      if (existingMs.has(fireMs)) continue;
       newRows.push({
         event_id: ev.id,
         user_id: ev.user_id,
@@ -368,8 +376,12 @@ async function backfill(): Promise<number> {
     }
 
     if (newRows.length > 0) {
-      await supabase.from("reminders").insert(newRows);
-      added += newRows.length;
+      // (event_id, kind, fire_at) is unique — ignore rather than error on
+      // any remaining overlap with existing rows.
+      const { error: insErr } = await supabase
+        .from("reminders")
+        .upsert(newRows, { onConflict: "event_id,kind,fire_at", ignoreDuplicates: true });
+      if (!insErr) added += newRows.length;
     }
   }
 

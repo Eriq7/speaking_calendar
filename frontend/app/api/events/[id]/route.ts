@@ -81,13 +81,18 @@ export async function PUT(
   if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
 
   const merged = updated as DBEvent;
-  const reminders = expandReminders(merged, timezone).map((r) => ({
-    ...r,
-    event_id: id,
-    user_id: user.id,
-  }));
+  const nowMs = Date.now();
+  const reminders = expandReminders(merged, timezone)
+    .filter((r) => new Date(r.fire_at).getTime() >= nowMs)
+    .map((r) => ({
+      ...r,
+      event_id: id,
+      user_id: user.id,
+    }));
   if (reminders.length > 0) {
-    const { error: remErr } = await supabase.from("reminders").insert(reminders);
+    const { error: remErr } = await supabase
+      .from("reminders")
+      .upsert(reminders, { onConflict: "event_id,kind,fire_at", ignoreDuplicates: true });
     if (remErr) return NextResponse.json({ error: remErr.message }, { status: 500 });
   }
 

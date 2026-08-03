@@ -111,14 +111,19 @@ export async function POST(req: NextRequest) {
     const eventId = inserted.id as string;
     eventIds.push(eventId);
 
-    const reminders = expandReminders(event, timezone).map((r) => ({
-      ...r,
-      event_id: eventId,
-      user_id: user.id,
-    }));
+    const nowMs = Date.now();
+    const reminders = expandReminders(event, timezone)
+      .filter((r) => new Date(r.fire_at).getTime() >= nowMs)
+      .map((r) => ({
+        ...r,
+        event_id: eventId,
+        user_id: user.id,
+      }));
 
     if (reminders.length > 0) {
-      const { error: remErr } = await supabase.from("reminders").insert(reminders);
+      const { error: remErr } = await supabase
+        .from("reminders")
+        .upsert(reminders, { onConflict: "event_id,kind,fire_at", ignoreDuplicates: true });
       if (remErr) return NextResponse.json({ error: remErr.message }, { status: 500 });
     }
   }
